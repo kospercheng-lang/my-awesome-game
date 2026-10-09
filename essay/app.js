@@ -628,6 +628,12 @@ function showModal(html) {
 }
 function closeModal() { $modal.hidden = true; }
 
+// 自己做的確認視窗（有些網頁環境會擋掉瀏覽器內建的 confirm）；msg 需先跳脫
+function askConfirm(msg, yesLabel, onYes) {
+  showModal(`<h2>${msg}</h2><div class="modal-actions"><button class="btn" data-act="close-modal">取消</button><button class="btn primary" id="confirm-yes">${yesLabel}</button></div>`);
+  document.getElementById('confirm-yes').onclick = () => { closeModal(); onYes(); };
+}
+
 function showCelebrate(title, gains, badgeIds, extra = '') {
   const total = gains.reduce((s, g) => s + g.amount, 0);
   const confetti = Array.from({ length: 24 }, (_, i) =>
@@ -680,10 +686,11 @@ const A = {
     ta.dispatchEvent(new Event('input'));
   },
   discard(el) {
-    if (!confirm('確定要刪除這篇草稿嗎？')) return;
-    S.essays = S.essays.filter(e => e.id !== el.dataset.id);
-    save();
-    location.hash = '#home';
+    askConfirm('確定要刪除這篇草稿嗎？', '刪除', () => {
+      S.essays = S.essays.filter(e => e.id !== el.dataset.id);
+      save();
+      location.hash = '#home';
+    });
   },
   'open-submit'(el) {
     const e = essayById(el.dataset.id), b = bandFor(me()), n = countWords(e.content);
@@ -736,11 +743,12 @@ const A = {
   redeem(el) {
     const p = me(), r = S.rewards.find(x => x.id === el.dataset.id);
     if (p.ink < r.cost) return toast('墨水不夠喔！');
-    if (!confirm(`要用 ${r.cost} 滴墨水兌換「${r.name}」嗎？`)) return;
-    spend(p, r.cost, `兌換「${r.name}」`);
-    S.redemptions.push({ id: uid(), pid: p.id, name: r.name, cost: r.cost, at: Date.now(), done: false });
-    save(); render();
-    toast('已送出兌換，請告訴老師或家長喔！');
+    askConfirm(`要用 ${r.cost} 滴墨水兌換「${esc(r.name)}」嗎？`, '兌換', () => {
+      spend(p, r.cost, `兌換「${r.name}」`);
+      S.redemptions.push({ id: uid(), pid: p.id, name: r.name, cost: r.cost, at: Date.now(), done: false });
+      save(); render();
+      toast('已送出兌換，請告訴老師或家長喔！');
+    });
   },
   lock() { teacherOK = false; location.hash = '#home'; },
   'quick-comment'(el) {
@@ -749,21 +757,22 @@ const A = {
   },
   gift(el) {
     const p = profileById(el.dataset.id);
-    const n = parseInt(prompt(`要送 ${p.name} 幾滴墨水？`, '10'), 10);
-    if (!(n > 0 && n <= 999)) return;
-    const reason = (prompt('原因（會顯示給學生看）', '表現很棒！') || '表現很棒！').slice(0, 30);
-    p.inbox.push({ text: `老師送你墨水：${reason}`, gains: [award(p, n, `老師獎勵：${reason}`)], badges: [] });
-    save(); render();
-    toast(`已送給 ${p.name} ${n} 滴墨水`);
+    showModal(`<h2>🎁 送墨水給 ${esc(p.name)}</h2>
+      <form data-form="gift" data-id="${p.id}">
+        <label>幾滴墨水 <input id="gift-n" name="n" type="number" min="1" max="999" value="10" required></label>
+        <label>原因（會顯示給學生看） <input id="gift-reason" name="reason" maxlength="30" value="表現很棒！"></label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close-modal">取消</button><button class="btn primary" type="submit">送出</button></div>
+      </form>`);
   },
   'del-profile'(el) {
     const p = profileById(el.dataset.id);
-    if (!confirm(`確定要刪除「${p.name}」和他的所有作文嗎？這個動作無法復原。`)) return;
-    S.profiles = S.profiles.filter(x => x.id !== p.id);
-    S.essays = S.essays.filter(e => e.pid !== p.id);
-    S.redemptions = S.redemptions.filter(r => r.pid !== p.id);
-    if (S.activeId === p.id) S.activeId = null;
-    save(); render();
+    askConfirm(`確定要刪除「${esc(p.name)}」和他的所有作文嗎？這個動作無法復原。`, '刪除', () => {
+      S.profiles = S.profiles.filter(x => x.id !== p.id);
+      S.essays = S.essays.filter(e => e.pid !== p.id);
+      S.redemptions = S.redemptions.filter(r => r.pid !== p.id);
+      if (S.activeId === p.id) S.activeId = null;
+      save(); render();
+    });
   },
   'redeem-done'(el) { S.redemptions.find(r => r.id === el.dataset.id).done = true; save(); render(); },
   'del-reward'(el) { S.rewards = S.rewards.filter(r => r.id !== el.dataset.id); save(); render(); },
@@ -812,6 +821,14 @@ const FORMS = {
     toast(`批改完成！${got ? `${profileById(e.pid).name} 獲得 ${got} 滴墨水` : ''}`);
     location.hash = '#teacher/pending';
   },
+  gift(f) {
+    const p = profileById(f.dataset.id), n = parseInt(f.n.value, 10);
+    if (!(n > 0 && n <= 999)) return toast('請輸入 1 到 999 之間的數字');
+    const reason = (f.reason.value.trim() || '表現很棒！').slice(0, 30);
+    p.inbox.push({ text: `老師送你墨水：${reason}`, gains: [award(p, n, `老師獎勵：${reason}`)], badges: [] });
+    save(); closeModal(); render();
+    toast(`已送給 ${p.name} ${n} 滴墨水`);
+  },
   'add-reward'(f) {
     const cost = parseInt(f.cost.value, 10);
     if (!f.name.value.trim() || !(cost > 0)) return;
@@ -830,13 +847,15 @@ const CHANGES = {
       try {
         const d = JSON.parse(reader.result);
         if (!d || !Array.isArray(d.profiles) || !Array.isArray(d.essays)) throw new Error('bad');
-        if (!confirm('匯入會取代目前所有資料，確定嗎？')) return;
-        S = Object.assign(defaultState(), d);
-        save(); render();
-        toast('匯入完成！');
+        askConfirm('匯入會取代目前所有資料，確定嗎？', '匯入', () => {
+          S = Object.assign(defaultState(), d);
+          save(); render();
+          toast('匯入完成！');
+        });
       } catch (err) { toast('這不是正確的備份檔'); }
     };
     reader.readAsText(file);
+    el.value = '';
   }
 };
 
