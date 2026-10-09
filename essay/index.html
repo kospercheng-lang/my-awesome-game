@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小作家樂園</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <a href="#home" class="logo">📝 小作家樂園</a>
+        <nav id="nav"></nav>
+        <div id="who"></div>
+    </header>
+
+    <main id="app"></main>
+
+    <div id="modal" class="modal" hidden><div class="modal-box" role="dialog" aria-modal="true"></div></div>
+    <div id="toast" class="toast" hidden role="status"></div>
+
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
