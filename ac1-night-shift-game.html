@@ -218,6 +218,15 @@ const START_CLOCK = 2 * 60 + 13;  // 02:13 告警
 const FIX_MIN = 8;                // 修好所需時間
 let night, step, clock, coat, checked, metrics, results = {};
 let dialogQueue = [], dialogOpen = false, overlayOpen = true;
+let usingKeyboard = false;
+window.addEventListener("keydown", () => { usingKeyboard = true; }, true);
+window.addEventListener("pointerdown", () => { usingKeyboard = false; }, true);
+// 觸控觸發後，瀏覽器補發的 click 會落在新出現的按鈕上；短時間內忽略它
+let suppressClickUntil = 0;
+const suppressNextClick = () => { suppressClickUntil = performance.now() + 600; };
+document.addEventListener("click", e => {
+    if (performance.now() < suppressClickUntil) { e.stopPropagation(); e.preventDefault(); }
+}, true);
 
 const player = { x: 0, y: 0, r: 10, path: [] };
 const keys = {};
@@ -512,7 +521,7 @@ function showLine() {
         box.hidden = true;
         dialogOpen = false;
         updateHud();
-        document.getElementById("game").focus();
+        if (usingKeyboard) document.getElementById("game").focus();
         return;
     }
     const [who, text, choices] = line;
@@ -536,16 +545,23 @@ function showLine() {
         b.type = "button";
         if (!choices) b.className = "primary";
         b.textContent = choices ? `${i + 1}. ${label}` : label;
-        b.onclick = () => {
+        let fired = false;
+        const choose = e => {
+            if (fired) return;
+            fired = true;
+            if (e) { e.preventDefault(); suppressNextClick(); }
             if (fn) { dialogQueue = []; box.hidden = true; dialogOpen = false; fn(); if (!dialogOpen) showLine(); }
             else showLine();
         };
+        // iOS 上有時收不到 click，手指離開按鈕時就觸發；click 留給鍵盤與滑鼠
+        b.addEventListener("pointerup", e => { if (e.pointerType !== "mouse") choose(e); });
+        b.addEventListener("click", () => choose());
         c.appendChild(b);
     });
     box.appendChild(c);
     box.hidden = false;
     updateHud();
-    c.querySelector("button").focus();
+    if (usingKeyboard) c.querySelector("button").focus();
 }
 
 // ===== 移動與尋路 =====
@@ -722,7 +738,8 @@ function box(w, h, d, mat, x, y, z) {
 
 function init3D() {
     renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    const lowPower = window.matchMedia("(pointer: coarse)").matches;
+    renderer.setPixelRatio(Math.min(lowPower ? 1.5 : 2, window.devicePixelRatio || 1));
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -742,7 +759,7 @@ function init3D() {
     sun.position.set(26, 24, 30);
     sun.target.position.set(20, 0, 11);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(lowPower ? 1024 : 2048, lowPower ? 1024 : 2048);
     Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 20, bottom: -20, near: 1, far: 80 });
     scene.add(sun, sun.target);
     const coldLight = new THREE.PointLight(0x9fd4ff, 0.9, 12);
@@ -1205,15 +1222,18 @@ function loop(now) {
 function showOverlay(html) {
     const o = document.getElementById("overlay");
     o.innerHTML = `<div class="card">${html}</div>`;
+    o.querySelectorAll("button").forEach(btn => btn.addEventListener("pointerup", e => {
+        if (e.pointerType !== "mouse" && btn.onclick) { e.preventDefault(); suppressNextClick(); const f = btn.onclick; btn.onclick = null; f(); }
+    }));
     o.hidden = false;
     overlayOpen = true;
     const b = o.querySelector("button");
-    if (b) setTimeout(() => b.focus(), 0);
+    if (b && usingKeyboard) setTimeout(() => b.focus(), 0);
 }
 function hideOverlay() {
     document.getElementById("overlay").hidden = true;
     overlayOpen = false;
-    document.getElementById("game").focus();
+    if (usingKeyboard) document.getElementById("game").focus();
 }
 
 function startNight1() {
