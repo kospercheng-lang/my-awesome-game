@@ -93,7 +93,12 @@
         position: absolute; inset: 0; background: rgba(6, 11, 16, 0.9);
         display: flex; align-items: center; justify-content: center; padding: 16px; overflow-y: auto;
     }
-    .overlay[hidden], .dialog[hidden], .gloss[hidden] { display: none; }
+    .prompt {
+        position: absolute; transform: translate(-50%, -100%);
+        background: rgba(12, 22, 32, 0.9); border: 1px solid var(--line); border-radius: 4px;
+        padding: 2px 8px; font-size: 0.8rem; font-weight: 700; pointer-events: none; white-space: nowrap;
+    }
+    .overlay[hidden], .dialog[hidden], .gloss[hidden], .prompt[hidden] { display: none; }
     .card { max-width: 560px; width: 100%; }
     .card .eyebrow { color: var(--accent); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; }
     .card h2 { margin: 4px 0 8px; font-size: 1.5rem; font-weight: 900; text-wrap: balance; }
@@ -115,7 +120,7 @@
     <div class="top">
         <div>
             <h1>冷庫夜班：<span>哪一台？</span></h1>
-            <div class="sub">北部食品冷凍物流中心・夜班設備工程師的一夜</div>
+            <div class="sub">北部食品冷凍物流中心・夜班設備工程師的一夜（3D）</div>
         </div>
         <div class="night-tag" id="night-tag">第一晚｜現況</div>
     </div>
@@ -127,7 +132,7 @@
     </div>
 
     <div class="stage" id="stage">
-        <canvas id="game" tabindex="0" aria-label="冷鏈物流中心場景，用方向鍵或點地板移動"></canvas>
+        <div class="prompt" id="prompt" hidden></div>
         <div class="gloss" id="gloss" hidden></div>
         <div class="dialog" id="dialog" hidden></div>
         <div class="overlay" id="overlay"></div>
@@ -144,6 +149,7 @@
     <footer>故事依 AC1 冷鏈 GTM 討論資料的固定情境改編（8 間冷庫、32 台冷風機、每台運轉／故障／除霜 3 點）。人物、時間、溫度與數字皆為虛構示意，非實測，也不代表任何公司的實際作業規定。</footer>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 // ===== 地圖 =====
 const T = 32, W = 40, H = 22;
@@ -627,244 +633,532 @@ function tryTalk() {
     if (o) interact(o.id);
 }
 
-// ===== 繪圖 =====
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-let viewW = 0, viewH = 0, scale = 1, camX = 0, camY = 0, tNow = 0;
+// ===== 3D 場景 =====
+// 座標：1 格 = 1 單位；格子 (x, y) 的中心在 (x + 0.5, 0, y + 0.5)
+const stage = document.getElementById("stage");
+const promptEl = document.getElementById("prompt");
+let renderer, scene, camera, groundPlane;
+const ray = new THREE.Raycaster();
+const pickables = [];
+const fanParts = {}, npcParts = {}, markers = {};
+let playerMesh, doorMesh, ac1Module, panelLabel, lockerLabel, screenTex, screenCtx, dLine, pulses = [];
+let tNow = 0;
+const camPos = new THREE.Vector3(20, 12, 28);
+const camLook = new THREE.Vector3(14, 0, 18);
 
-function resize() {
-    const w = canvas.parentElement.clientWidth;
-    const h = Math.round(Math.min(560, Math.max(320, w * 0.62)));
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = w * dpr; canvas.height = h * dpr;
-    canvas.style.height = h + "px";
-    viewW = w; viewH = h;
-    scale = Math.max(0.7, Math.min(1.25, w / (22 * T)));
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-
-const COLORS = {
-    floorHall: "#223242", floorOffice: "#26343c", floorMachine: "#2a2f38", floorCold: "#a8c9de",
-    wallTop: "#506476", wallFront: "#33434f", blockTop: "#2b5675", blockFront: "#1d3d55",
-    door: "#7f97a8", doorOpen: "#bcd3e2", text: "#e6eef5", muted: "#8fa4b6",
-    accent: "#f0901f", warn: "#f2c14e", run: "#35b56f", defrost: "#4a97f0", fault: "#ef5a5a", unknown: "#4d6378",
-    cable: "#c9a227", dline: "#4a97f0"
+const C = {
+    hall: 0x223242, office: 0x2a3940, machine: 0x2c323b, cold: 0xa9cbe0, wall: 0x4d6274,
+    block: 0x2c5878, machineBlock: 0x3e4a55, accent: 0xf0901f, run: 0x35b56f, defrost: 0x4a97f0,
+    fault: 0xef5a5a, unknown: 0x4d6378, cable: 0xc9a227, dline: 0x4a97f0
 };
 
-function draw() {
-    camX = Math.max(0, Math.min(W * T - viewW / scale, player.x - viewW / scale / 2));
-    camY = Math.max(-10, Math.min(H * T - viewH / scale, player.y - viewH / scale / 2));
-    ctx.fillStyle = "#0a1118";
-    ctx.fillRect(0, 0, viewW, viewH);
-    ctx.save();
-    ctx.scale(scale, scale);
-    ctx.translate(-camX, -camY);
+function textCanvas(text, { size = 44, weight = 700, color = "#e6eef5", bg = null, pad = 14, family = "'Noto Sans TC', sans-serif" } = {}) {
+    const c = document.createElement("canvas");
+    const g = c.getContext("2d");
+    const font = `${weight} ${size}px ${family}`;
+    g.font = font;
+    const lines = String(text).split("\n");
+    const w = Math.ceil(Math.max(...lines.map(l => g.measureText(l).width))) + pad * 2;
+    const h = Math.ceil(size * 1.3 * lines.length) + pad * 2;
+    c.width = w; c.height = h;
+    g.font = font;
+    if (bg) {
+        g.fillStyle = bg;
+        const r = 12;
+        g.beginPath();
+        g.moveTo(r, 0); g.arcTo(w, 0, w, h, r); g.arcTo(w, h, 0, h, r); g.arcTo(0, h, 0, 0, r); g.arcTo(0, 0, w, 0, r);
+        g.fill();
+    }
+    g.fillStyle = color;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    lines.forEach((l, i) => g.fillText(l, w / 2, pad + size * 1.3 * (i + 0.5)));
+    return c;
+}
 
-    // 地板
+function makeSprite(text, height, opts = {}) {
+    const c = textCanvas(text, opts);
+    const tex = new THREE.CanvasTexture(c);
+    tex.encoding = THREE.sRGBEncoding;
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: opts.depthTest ?? true }));
+    s.scale.set(height * c.width / c.height, height, 1);
+    s.renderOrder = opts.depthTest === false ? 10 : 1;
+    return s;
+}
+
+function setSpriteText(sprite, text, height, opts = {}) {
+    const c = textCanvas(text, opts);
+    sprite.material.map.dispose();
+    sprite.material.map = new THREE.CanvasTexture(c);
+    sprite.material.map.encoding = THREE.sRGBEncoding;
+    sprite.material.needsUpdate = true;
+    sprite.scale.set(height * c.width / c.height, height, 1);
+}
+
+function floorText(text, x, z, height, color = "rgba(230,238,245,0.45)") {
+    const c = textCanvas(text, { color, size: 56 });
+    const tex = new THREE.CanvasTexture(c);
+    tex.encoding = THREE.sRGBEncoding;
+    const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(height * c.width / c.height, height),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    );
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, 0.02, z);
+    scene.add(m);
+}
+
+const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
+const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color: lin(color), roughness: 0.8, metalness: 0.05, ...extra });
+
+function box(w, h, d, mat, x, y, z) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    scene.add(m);
+    return m;
+}
+
+function init3D() {
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const el = renderer.domElement;
+    el.id = "game";
+    el.tabIndex = 0;
+    el.setAttribute("aria-label", "冷鏈物流中心 3D 場景，用方向鍵或點地板移動");
+    stage.insertBefore(el, stage.firstChild);
+
+    scene = new THREE.Scene();
+    scene.background = lin(0x0a1118);
+    scene.fog = new THREE.Fog(lin(0x0a1118), 22, 42);
+    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 120);
+
+    scene.add(new THREE.HemisphereLight(0xc4dcff, 0x16202a, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+    sun.position.set(26, 24, 30);
+    sun.target.position.set(20, 0, 11);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 20, bottom: -20, near: 1, far: 80 });
+    scene.add(sun, sun.target);
+    const coldLight = new THREE.PointLight(0x9fd4ff, 0.9, 12);
+    coldLight.position.set(21, 3, 4);
+    scene.add(coldLight);
+
+    groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ visible: false }));
+    groundPlane.rotation.x = -Math.PI / 2;
+    scene.add(groundPlane);
+
+    buildTiles();
+    buildBlocks();
+    buildObjects();
+    buildCables();
+    buildPlayer();
+    resize3D();
+}
+
+function buildTiles() {
+    const floorTypes = { ".": C.hall, "o": C.office, "m": C.machine, "c": C.cold, "D": C.cold };
+    const geo = new THREE.BoxGeometry(1, 0.1, 1);
+    const counts = {};
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const ch = grid[y][x];
-        const fill = { ".": COLORS.floorHall, "o": COLORS.floorOffice, "m": COLORS.floorMachine, "c": COLORS.floorCold, "D": coat ? COLORS.doorOpen : COLORS.door }[ch];
-        if (!fill) continue;
-        ctx.fillStyle = fill;
-        ctx.fillRect(x * T, y * T, T, T);
-        if (ch === "c" && (x * 7 + y * 3) % 5 === 0) {
-            ctx.fillStyle = "rgba(255,255,255,0.35)";
-            ctx.fillRect(x * T + 8, y * T + 12, 3, 3);
-        }
-        if (ch === "." || ch === "o") {
-            ctx.strokeStyle = "rgba(255,255,255,0.03)";
-            ctx.strokeRect(x * T, y * T, T, T);
-        }
+        if (floorTypes[ch] !== undefined) counts[ch] = (counts[ch] || 0) + 1;
     }
-    // 房間名稱
-    ctx.font = "700 14px 'Noto Sans TC', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(230,238,245,0.35)";
-    ROOMS_BOTTOM.forEach(r => ctx.fillText(r.name, (r.x0 + r.x1 + 1) / 2 * T, 20.5 * T));
-    ctx.fillStyle = "rgba(20,40,60,0.45)";
-    ctx.fillText("C3 冷凍庫", 21 * T, 7.6 * T);
-    ctx.fillStyle = "rgba(230,238,245,0.3)";
-    ctx.fillText("走道／月台", 31 * T, 10.7 * T);
+    const dummy = new THREE.Object3D();
+    Object.entries(counts).forEach(([ch, n]) => {
+        const mesh = new THREE.InstancedMesh(geo, std(floorTypes[ch], ch === "c" ? { roughness: 0.4 } : {}), n);
+        mesh.receiveShadow = true;
+        let i = 0;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+            if (grid[y][x] !== ch) continue;
+            dummy.position.set(x + 0.5, -0.05, y + 0.5);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i++, dummy.matrix);
+        }
+        scene.add(mesh);
+    });
 
-    // 電纜：配電盤 → 走道 → C3 → 冷風機
-    drawCables();
-
-    // 牆與實心冷庫（依列畫，前牆有厚度）
+    // 牆
+    let wallCount = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === "#") wallCount++;
+    const wallMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1.1, 1), std(C.wall), wallCount);
+    wallMesh.castShadow = true;
+    wallMesh.receiveShadow = true;
+    let i = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-        const ch = grid[y][x];
-        if (ch !== "#" && ch !== "X") continue;
-        const below = y + 1 < H ? grid[y + 1][x] : "#";
-        const showFront = below !== "#" && below !== "X";
-        ctx.fillStyle = ch === "X" ? COLORS.blockTop : COLORS.wallTop;
-        ctx.fillRect(x * T, y * T - 10, T, T);
-        if (showFront) {
-            ctx.fillStyle = ch === "X" ? COLORS.blockFront : COLORS.wallFront;
-            ctx.fillRect(x * T, y * T + T - 10, T, 10);
-        }
+        if (grid[y][x] !== "#") continue;
+        dummy.position.set(x + 0.5, 0.55, y + 0.5);
+        dummy.updateMatrix();
+        wallMesh.setMatrixAt(i++, dummy.matrix);
     }
+    scene.add(wallMesh);
+
+    // C3 庫門（換上防寒衣後打開）
+    doorMesh = box(2, 1.6, 0.2, std(0x8fa7b8, { metalness: 0.4, roughness: 0.4 }), 21, 0.8, 8.5);
+
+    // 地板文字
+    ROOMS_BOTTOM.forEach(r => floorText(r.name, (r.x0 + r.x1 + 1) / 2, 20.3, 0.7));
+    floorText("走道／月台", 31, 10.5, 0.7);
+    floorText("C3 冷凍庫", 21, 7.3, 0.7, "rgba(20,50,75,0.6)");
+}
+
+function buildBlocks() {
     BLOCK_LABELS.forEach(b => {
-        const cx = (b.x0 + b.x1 + 1) / 2 * T;
-        ctx.fillStyle = COLORS.text;
-        ctx.font = "700 20px 'Chakra Petch', sans-serif";
-        ctx.fillText(b.name, cx, 4 * T);
-        if (b.sub) {
-            ctx.font = "13px 'Noto Sans TC', sans-serif";
-            ctx.fillStyle = COLORS.muted;
-            ctx.fillText(`${b.sub} -22.0°C`, cx, 4.7 * T);
+        const w = b.x1 - b.x0 + 1;
+        const isUnit = !b.sub;
+        const h = isUnit ? 1.6 : 2.4;
+        const m = box(w, h, 8, std(isUnit ? C.machineBlock : C.block, { roughness: 0.55 }), b.x0 + w / 2, h / 2, 5);
+        // 冷庫門
+        if (!isUnit) box(1.6, 1.5, 0.08, std(0x8fa7b8, { metalness: 0.4, roughness: 0.4 }), b.x0 + w / 2, 0.75, 9.04);
+        // 屋頂霜白
+        if (!isUnit) box(w - 0.2, 0.05, 7.8, std(0xd6e6f0, { roughness: 0.9 }), b.x0 + w / 2, h + 0.03, 5);
+        if (isUnit) {
+            for (let k = 0; k < 2; k++) {
+                const fanTop = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.1, 24), std(0x222b33));
+                fanTop.position.set(b.x0 + 1.5 + k * 2, h + 0.06, 3 + k * 3);
+                scene.add(fanTop);
+            }
+        }
+        const label = makeSprite(b.sub ? `${b.name}\n${b.sub} -22.0°C` : b.name, b.sub ? 1.3 : 0.7);
+        label.position.set(b.x0 + w / 2, h + 1, 6.5);
+        scene.add(label);
+        m.userData.block = true;
+    });
+}
+
+function npc(color) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.8, 16), std(color));
+    body.position.y = 0.45;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 12), std(0xf1d3b5));
+    head.position.y = 1.05;
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.205, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), std(0x2a2a2a));
+    hair.position.y = 1.08;
+    [body, head, hair].forEach(m => { m.castShadow = true; g.add(m); });
+    return g;
+}
+
+function buildObjects() {
+    OBJS.forEach(o => {
+        const x = o.x + 0.5, z = o.y + 0.5;
+        let g;
+        if (o.kind === "npc") {
+            g = npc(new THREE.Color(o.color).getHex());
+            g.position.set(x, 0, z);
+            g.rotation.y = Math.PI;
+            const label = makeSprite(o.name, 0.4, { bg: "rgba(12,22,32,0.75)" });
+            label.position.set(0, 1.6, 0);
+            g.add(label);
+            npcParts[o.id] = g;
+            scene.add(g);
+        } else if (o.kind === "fan") {
+            g = new THREE.Group();
+            const facing = { fan1: 0, fan2: 0, fan3: Math.PI / 2, fan4: -Math.PI / 2 }[o.id];
+            const unit = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.4), std(0xd5dfe6, { roughness: 0.5 }));
+            unit.castShadow = true;
+            const grill = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.05, 20), std(0x3d4f5c));
+            grill.rotation.x = Math.PI / 2;
+            grill.position.z = 0.21;
+            const blade = new THREE.Group();
+            for (let k = 0; k < 3; k++) {
+                const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.38, 0.02), std(0xc9d6df));
+                b.rotation.z = k * 2.09;
+                blade.add(b);
+            }
+            blade.position.z = 0.25;
+            const light = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), new THREE.MeshBasicMaterial({ color: C.unknown }));
+            light.position.set(0.36, 0.2, 0.21);
+            const holder = new THREE.Group();
+            holder.add(unit, grill, blade, light);
+            holder.position.y = 1.5;
+            // 掛在牆上：往背後的牆靠
+            holder.position.z = -0.3;
+            g.add(holder);
+            const label = makeSprite(`C3-${o.n}`, 0.32, { bg: "rgba(20,50,75,0.8)" });
+            label.position.set(0, 0.9, 0);
+            g.add(label);
+            g.position.set(x, 0, z);
+            g.rotation.y = facing;
+            fanParts[o.id] = { blade, light };
+            scene.add(g);
+        } else if (o.kind === "pallet") {
+            g = new THREE.Group();
+            const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.12, 0.9), std(0x8a6a45));
+            base.position.y = 0.06;
+            g.add(base);
+            const stacks = 1 + ((o.x + o.y) % 2);
+            for (let k = 0; k < stacks; k++) {
+                const crate = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.5, 0.82), std(0xd9c3a0));
+                crate.position.y = 0.37 + k * 0.52;
+                crate.castShadow = true;
+                g.add(crate);
+            }
+            g.position.set(x, 0, z);
+            scene.add(g);
+        } else if (o.kind === "desk") {
+            g = new THREE.Group();
+            const top = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.8), std(0x6b5641));
+            top.position.y = 0.75;
+            const legs = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 0.7), std(0x4a3c2f));
+            legs.position.y = 0.36;
+            const book = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.3), std(0xe8e2d0));
+            book.position.y = 0.82;
+            g.add(top, legs, book);
+            g.position.set(x, 0, z);
+            scene.add(g);
+            addObjLabel(g, o.name, 1.3);
+        } else if (o.kind === "screen") {
+            g = new THREE.Group();
+            const sc = document.createElement("canvas");
+            sc.width = 512; sc.height = 256;
+            screenCtx = sc.getContext("2d");
+            screenTex = new THREE.CanvasTexture(sc);
+            screenTex.encoding = THREE.sRGBEncoding;
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.4, 0.12), std(0x111a22));
+            frame.position.y = 1.4;
+            const face = new THREE.Mesh(new THREE.PlaneGeometry(2.45, 1.25), new THREE.MeshBasicMaterial({ map: screenTex }));
+            face.position.set(0, 1.4, 0.07);
+            const stand = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.75, 0.6), std(0x2b3a46));
+            stand.position.set(0, 0.37, 0.25);
+            g.add(frame, face, stand);
+            g.position.set(x + 0.5, 0, z - 0.2);
+            scene.add(g);
+            addObjLabel(g, o.name, 2.4);
+        } else if (o.kind === "locker") {
+            g = new THREE.Group();
+            const cab = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 0.5), std(0xb5651d));
+            cab.position.y = 0.9;
+            cab.castShadow = true;
+            const seam = new THREE.Mesh(new THREE.BoxGeometry(0.03, 1.6, 0.02), std(0x7a4312));
+            seam.position.set(0, 0.9, 0.26);
+            g.add(cab, seam);
+            g.position.set(x, 0, z - 0.2);
+            scene.add(g);
+            lockerLabel = addObjLabel(g, o.name, 2.2);
+        } else if (o.kind === "panel") {
+            g = new THREE.Group();
+            const cab = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.8, 0.4), std(0x8d9aa5, { metalness: 0.3, roughness: 0.5 }));
+            cab.position.y = 0.9;
+            cab.castShadow = true;
+            ac1Module = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.1), new THREE.MeshStandardMaterial({ color: lin(C.accent), emissive: lin(C.accent), emissiveIntensity: 0.4 }));
+            ac1Module.position.set(0, 0.7, 0.22);
+            g.add(cab, ac1Module);
+            g.position.set(x, 0, z - 0.2);
+            scene.add(g);
+            panelLabel = addObjLabel(g, o.name, 2.2);
+        }
+        if (g) {
+            g.traverse(m => { m.userData.objId = o.id; });
+            pickables.push(g);
+        }
+        if (o.kind !== "pallet") {
+            const mk = makeSprite("!", 0.55, { bg: "#f2c14e", color: "#1a1200", size: 60, weight: 900, pad: 18, depthTest: false });
+            mk.visible = false;
+            scene.add(mk);
+            markers[o.id] = mk;
+        }
+    });
+}
+
+function addObjLabel(g, text, y) {
+    const s = makeSprite(text, 0.34, { bg: "rgba(12,22,32,0.75)" });
+    s.position.set(0, y, 0);
+    g.add(s);
+    return s;
+}
+
+// 電纜：配電盤 → 走道 → C3 → 冷風機；L/N 黃色，第二晚多一條 D 線（藍）與資料光點
+const CABLE_PATHS = [
+    [[19.5, 13.3], [19.5, 11.6], [21.5, 11.6], [21.5, 1.6], [24.5, 1.6]],
+    [[21.5, 1.6], [18.5, 1.6]],
+    [[21.5, 5.5], [17.8, 5.5]],
+    [[21.5, 5.5], [24.2, 5.5]]
+];
+
+function segMesh(a, b, r, mat, yOff) {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8), mat);
+    m.position.set((a[0] + b[0]) / 2, yOff, (a[1] + b[1]) / 2);
+    m.rotation.z = Math.PI / 2;
+    m.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]);
+    scene.add(m);
+    return m;
+}
+
+function buildCables() {
+    const yellow = std(C.cable, { roughness: 0.5 });
+    const blue = new THREE.MeshStandardMaterial({ color: lin(C.dline), emissive: lin(C.dline), emissiveIntensity: 0.6 });
+    dLine = new THREE.Group();
+    CABLE_PATHS.forEach(p => {
+        for (let i = 0; i < p.length - 1; i++) {
+            segMesh(p[i], p[i + 1], 0.06, yellow, 0.07);
+            const d = segMesh([p[i][0] + 0.12, p[i][1] + 0.12], [p[i + 1][0] + 0.12, p[i + 1][1] + 0.12], 0.03, blue, 0.07);
+            scene.remove(d);
+            dLine.add(d);
+        }
+    });
+    scene.add(dLine);
+    const pulseMat = new THREE.MeshBasicMaterial({ color: 0x9ccaff });
+    for (let k = 0; k < 6; k++) {
+        const s = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), pulseMat);
+        s.userData.offset = k / 6;
+        dLine.add(s);
+        pulses.push(s);
+    }
+}
+
+function pointOnMain(t) {
+    const p = CABLE_PATHS[0];
+    const lens = [];
+    let total = 0;
+    for (let i = 0; i < p.length - 1; i++) { const l = Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]); lens.push(l); total += l; }
+    let d = t * total;
+    for (let i = 0; i < lens.length; i++) {
+        if (d <= lens[i]) {
+            const f = d / lens[i];
+            return [p[i][0] + (p[i + 1][0] - p[i][0]) * f + 0.12, p[i][1] + (p[i + 1][1] - p[i][1]) * f + 0.12];
+        }
+        d -= lens[i];
+    }
+    return p[p.length - 1];
+}
+
+function buildPlayer() {
+    playerMesh = npc(C.accent);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.07, 0.06), std(0x2a3a48));
+    visor.position.set(0, 1.08, 0.19);
+    playerMesh.add(visor);
+    playerMesh.userData.body = playerMesh.children[0];
+    playerMesh.userData.visor = visor;
+    const label = makeSprite("你", 0.38, { bg: "rgba(240,144,31,0.9)", color: "#1a0f02" });
+    label.position.set(0, 1.6, 0);
+    playerMesh.add(label);
+    scene.add(playerMesh);
+}
+
+function drawScreen() {
+    const g = screenCtx, w = 512, h = 256;
+    g.fillStyle = "#07121b"; g.fillRect(0, 0, w, h);
+    g.font = "700 22px 'Noto Sans TC', sans-serif";
+    g.fillStyle = "#8fa4b6";
+    g.textAlign = "left";
+    g.fillText(night === 2 ? "冷庫監控・設備狀態（AC1）" : "冷庫監控・庫溫", 16, 30);
+    for (let i = 0; i < 8; i++) {
+        const cx = 16 + (i % 4) * 124, cy = 50 + Math.floor(i / 4) * 100;
+        const isC3 = i === 2;
+        g.fillStyle = isC3 && c3Temp(clock) > -18 ? "#4a2228" : "#13283a";
+        g.fillRect(cx, cy, 112, 88);
+        g.fillStyle = "#e6eef5";
+        g.font = "700 20px 'Chakra Petch', sans-serif";
+        g.fillText(`C${i + 1}`, cx + 8, cy + 24);
+        const temp = isC3 ? c3Temp(clock) : (i < 5 ? -22 : 1.5);
+        g.fillStyle = isC3 && temp > -18 ? "#ef5a5a" : "#e6eef5";
+        g.fillText(`${temp.toFixed(1)}°`, cx + 8, cy + 52);
+        for (let k = 0; k < 4; k++) {
+            let col = "#2f4458";
+            if (night === 2) col = isC3 && k === 1 && metrics.dispatchAt === null ? "#4a97f0" : "#35b56f";
+            g.fillStyle = col;
+            g.beginPath(); g.arc(cx + 16 + k * 26, cy + 72, 8, 0, Math.PI * 2); g.fill();
+        }
+    }
+    screenTex.needsUpdate = true;
+}
+
+function fanColor3(id) {
+    if (night === 2) return id === "fan2" && metrics.dispatchAt === null ? C.defrost : C.run;
+    if (!checked[id]) return C.unknown;
+    if (id === "fan2") return metrics.dispatchAt === null ? C.defrost : C.accent;
+    return C.run;
+}
+
+function resize3D() {
+    const w = stage.clientWidth;
+    const h = Math.round(Math.min(600, Math.max(340, w * 0.62)));
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+}
+
+let lastState = "";
+function update3D(dt) {
+    const px = player.x / T, pz = player.y / T;
+    playerMesh.position.set(px, 0, pz);
+    if (player.moved) {
+        const target = Math.atan2(player.dir[0], player.dir[1]);
+        let diff = target - playerMesh.rotation.y;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        playerMesh.rotation.y += diff * Math.min(1, dt * 12);
+        playerMesh.position.y = Math.abs(Math.sin(tNow / 90)) * 0.06;
+    }
+    playerMesh.userData.body.material.color.copy(lin(coat ? 0xe8edf2 : C.accent));
+
+    // 鏡頭：在角色後上方跟隨；窄螢幕拉高
+    const narrow = camera.aspect < 0.9;
+    const off = narrow ? new THREE.Vector3(0, 13, 8.5) : new THREE.Vector3(0, 9.5, 7.5);
+    const want = new THREE.Vector3(px, 0, pz).add(off);
+    camPos.lerp(want, Math.min(1, dt * 4));
+    camLook.lerp(new THREE.Vector3(px, 0.6, pz - 0.8), Math.min(1, dt * 5));
+    camera.position.copy(camPos);
+    camera.lookAt(camLook);
+
+    // 冷風機：運轉中的風扇轉動、狀態燈
+    OBJS.filter(o => o.kind === "fan").forEach(o => {
+        const p = fanParts[o.id];
+        const running = o.id !== "fan2" || (metrics.dispatchAt !== null && clock >= metrics.dispatchAt + FIX_MIN);
+        if (running) p.blade.rotation.z += dt * 14;
+        p.light.material.color.copy(lin(fanColor3(o.id)));
+    });
+
+    // NPC 呼吸
+    Object.values(npcParts).forEach((g, i) => { g.children[0].scale.y = 1 + Math.sin(tNow / 600 + i) * 0.02; });
+
+    // 門、AC1 模組、D 線
+    doorMesh.visible = !coat;
+    ac1Module.visible = night === 2;
+    dLine.visible = night === 2;
+    if (night === 2) pulses.forEach(s => {
+        const [x, z] = pointOnMain((tNow / 6000 + s.userData.offset) % 1);
+        s.position.set(x, 0.1, z);
+    });
+
+    // 文字隨狀態更新
+    const st = `${night}|${coat}|${metrics.dispatchAt}`;
+    if (st !== lastState) {
+        lastState = st;
+        setSpriteText(panelLabel, night === 2 ? "配電盤＋AC1 Gateway" : "配電盤", 0.34, { bg: "rgba(12,22,32,0.75)" });
+        setSpriteText(lockerLabel, coat ? "防寒衣（已穿）" : "防寒衣櫃", 0.34, { bg: "rgba(12,22,32,0.75)" });
+    }
+    if (Math.floor(tNow / 500) !== update3D.screenTick) { update3D.screenTick = Math.floor(tNow / 500); drawScreen(); }
+
+    // 任務驚嘆號
+    const tg = new Set(!dialogOpen && !overlayOpen ? targets() : []);
+    Object.entries(markers).forEach(([id, mk]) => {
+        mk.visible = tg.has(id);
+        if (mk.visible) {
+            const o = objById[id];
+            const y = (o.kind === "fan" ? 2.4 : o.kind === "npc" ? 2.1 : 2.8) + Math.sin(tNow / 250) * 0.12;
+            mk.position.set(o.x + 0.5, y, o.y + 0.5);
         }
     });
 
-    // 物件與人物（依 y 排序）
-    const drawables = OBJS.map(o => ({ y: o.y * T + T, fn: () => drawObj(o) }));
-    drawables.push({ y: player.y + player.r, fn: drawPlayer });
-    drawables.sort((a, b) => a.y - b.y).forEach(d => d.fn());
-
-    // 任務驚嘆號
-    if (!dialogOpen && !overlayOpen) {
-        const bob = Math.sin(tNow / 250) * 3;
-        targets().forEach(id => {
-            const o = objById[id];
-            const x = o.x * T + T / 2, y = o.y * T - 18 + bob;
-            ctx.fillStyle = COLORS.warn;
-            ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = "#1a1200";
-            ctx.font = "900 15px 'Noto Sans TC', sans-serif";
-            ctx.fillText("!", x, y + 5);
-        });
-        const n = nearest();
-        if (n) {
-            ctx.font = "700 12px 'Noto Sans TC', sans-serif";
-            const label = `E　${n.name}`;
-            const w = ctx.measureText(label).width + 14;
-            const x = player.x, y = player.y - 30;
-            ctx.fillStyle = "rgba(12,22,32,0.9)";
-            ctx.fillRect(x - w / 2, y - 14, w, 20);
-            ctx.fillStyle = COLORS.text;
-            ctx.fillText(label, x, y);
-        }
+    // 「E」提示（HTML，跟著角色頭上）
+    const n = !dialogOpen && !overlayOpen ? nearest() : null;
+    if (n) {
+        const v = new THREE.Vector3(px, 2.1, pz).project(camera);
+        promptEl.textContent = `E　${n.name}`;
+        promptEl.style.left = `${(v.x + 1) / 2 * renderer.domElement.clientWidth}px`;
+        promptEl.style.top = `${(1 - v.y) / 2 * renderer.domElement.clientHeight}px`;
+        promptEl.hidden = false;
+    } else {
+        promptEl.hidden = true;
     }
-    ctx.restore();
-}
 
-function drawCables() {
-    const pts = [[19.5, 13.2], [19.5, 11.6], [21.5, 11.6], [21.5, 7.5], [21.5, 1.9], [24.5, 1.9]];
-    const branches = [[[21.5, 1.9], [18.5, 1.9]], [[21.5, 5.5], [17.8, 5.5]], [[21.5, 5.5], [24.5, 5.5]]];
-    const line = (arr, style, width, dash) => {
-        ctx.strokeStyle = style; ctx.lineWidth = width; ctx.setLineDash(dash || []);
-        ctx.beginPath();
-        arr.forEach(([x, y], i) => i ? ctx.lineTo(x * T, y * T) : ctx.moveTo(x * T, y * T));
-        ctx.stroke();
-    };
-    line(pts, COLORS.cable, 5);
-    branches.forEach(b => line(b, COLORS.cable, 5));
-    if (night === 2) {
-        ctx.lineDashOffset = -(tNow / 40) % 14;
-        line(pts, COLORS.dline, 2, [6, 8]);
-        branches.forEach(b => line(b, COLORS.dline, 2, [6, 8]));
-        ctx.lineDashOffset = 0;
-    }
-    ctx.setLineDash([]);
-}
-
-function fanColor(o) {
-    if (night === 2) return o.id === "fan2" && metrics.dispatchAt === null ? COLORS.defrost : COLORS.run;
-    if (!checked[o.id]) return COLORS.unknown;
-    if (o.id === "fan2") return metrics.dispatchAt === null ? COLORS.defrost : COLORS.accent;
-    return COLORS.run;
-}
-
-function drawObj(o) {
-    const x = o.x * T, y = o.y * T;
-    const cx = x + T / 2, cy = y + T / 2;
-    ctx.textAlign = "center";
-    if (o.kind === "npc") {
-        ctx.fillStyle = "rgba(0,0,0,0.35)";
-        ctx.beginPath(); ctx.ellipse(cx, y + T - 4, 11, 4, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = o.color;
-        ctx.beginPath(); ctx.arc(cx, cy + 4, 10, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#f1d3b5";
-        ctx.beginPath(); ctx.arc(cx, cy - 9, 7, 0, Math.PI * 2); ctx.fill();
-        ctx.font = "700 11px 'Noto Sans TC', sans-serif";
-        ctx.fillStyle = COLORS.text;
-        ctx.fillText(o.name, cx, y + T + 10);
-    } else if (o.kind === "fan") {
-        ctx.fillStyle = "#c9d6df";
-        ctx.fillRect(x + 2, y + 2, T - 4, T - 8);
-        ctx.fillStyle = "#3d4f5c";
-        ctx.beginPath(); ctx.arc(cx, cy - 2, 9, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#c9d6df"; ctx.lineWidth = 2;
-        const a = night === 2 && o.id !== "fan2" ? tNow / 120 : (checked[o.id] && o.id !== "fan2" ? tNow / 120 : 0);
-        for (let k = 0; k < 3; k++) {
-            ctx.beginPath(); ctx.moveTo(cx, cy - 2);
-            ctx.lineTo(cx + Math.cos(a + k * 2.09) * 8, cy - 2 + Math.sin(a + k * 2.09) * 8); ctx.stroke();
-        }
-        ctx.fillStyle = fanColor(o);
-        ctx.beginPath(); ctx.arc(x + T - 6, y + 6, 5, 0, Math.PI * 2); ctx.fill();
-        ctx.font = "700 11px 'Chakra Petch', sans-serif";
-        ctx.fillStyle = "#14324a";
-        ctx.fillText(`C3-${o.n}`, cx, y + T + 8);
-    } else if (o.kind === "pallet") {
-        ctx.fillStyle = "#8a6a45";
-        ctx.fillRect(x + 2, y + 18, T - 4, 10);
-        ctx.fillStyle = "#d9c3a0";
-        ctx.fillRect(x + 4, y - 4, T - 8, 22);
-        ctx.strokeStyle = "#a88c64"; ctx.lineWidth = 1;
-        ctx.strokeRect(x + 4, y - 4, T - 8, 22);
-    } else if (o.kind === "desk") {
-        ctx.fillStyle = "#5a4a3a"; ctx.fillRect(x - 6, y + 4, T + 12, T - 8);
-        ctx.fillStyle = "#e8e2d0"; ctx.fillRect(x + 8, y + 9, 16, 12);
-        ctx.font = "700 11px 'Noto Sans TC', sans-serif"; ctx.fillStyle = COLORS.text;
-        ctx.fillText(o.name, cx, y + T + 10);
-    } else if (o.kind === "screen") {
-        ctx.fillStyle = "#0e1a24"; ctx.fillRect(x - 20, y + 2, T + 40, T - 6);
-        for (let i = 0; i < 8; i++) {
-            const lx = x - 14 + (i % 4) * 18, ly = y + 8 + Math.floor(i / 4) * 11;
-            if (night === 2) {
-                for (let k = 0; k < 4; k++) {
-                    ctx.fillStyle = i === 2 && k === 1 && metrics.dispatchAt === null ? COLORS.defrost : COLORS.run;
-                    ctx.fillRect(lx + k * 4, ly, 3, 3);
-                }
-                ctx.fillStyle = i === 2 ? COLORS.fault : "#4c7a99";
-                ctx.fillRect(lx, ly + 5, 15, 2);
-            } else {
-                ctx.fillStyle = i === 2 ? COLORS.fault : "#4c7a99";
-                ctx.fillRect(lx, ly + 2, 15, 4);
-            }
-        }
-        ctx.font = "700 11px 'Noto Sans TC', sans-serif"; ctx.fillStyle = COLORS.text;
-        ctx.fillText(o.name, cx, y + T + 10);
-    } else if (o.kind === "locker") {
-        ctx.fillStyle = "#b5651d"; ctx.fillRect(x + 4, y - 8, T - 8, T + 4);
-        ctx.fillStyle = "#8a4c15"; ctx.fillRect(x + T / 2 - 1, y - 6, 2, T);
-        ctx.font = "700 11px 'Noto Sans TC', sans-serif"; ctx.fillStyle = COLORS.text;
-        ctx.fillText(coat ? "防寒衣（已穿）" : o.name, cx, y + T + 10);
-    } else if (o.kind === "panel") {
-        ctx.fillStyle = "#8d9aa5"; ctx.fillRect(x + 2, y - 10, T - 4, T + 6);
-        ctx.fillStyle = "#5e6a74"; ctx.fillRect(x + 6, y - 4, T - 12, 10);
-        if (night === 2) {
-            ctx.fillStyle = COLORS.accent; ctx.fillRect(x + 6, y + 10, T - 12, 10);
-            ctx.font = "700 8px 'Chakra Petch', sans-serif"; ctx.fillStyle = "#1a0f02";
-            ctx.fillText("AC1", cx, y + 18);
-        }
-        ctx.font = "700 11px 'Noto Sans TC', sans-serif"; ctx.fillStyle = COLORS.text;
-        ctx.fillText(night === 2 ? "配電盤＋Gateway" : o.name, cx, y + T + 10);
-    }
-}
-
-function drawPlayer() {
-    const { x, y } = player;
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.beginPath(); ctx.ellipse(x, y + 11, 11, 4, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = coat ? "#e8edf2" : "#f0901f";
-    ctx.beginPath(); ctx.arc(x, y + 2, 10, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#f1d3b5";
-    ctx.beginPath(); ctx.arc(x, y - 11, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = coat ? "#4a97f0" : "#2a3a48";
-    ctx.fillRect(x - 7, y - 19, 14, 5);
-    ctx.font = "700 11px 'Noto Sans TC', sans-serif";
-    ctx.fillStyle = COLORS.accent;
-    ctx.textAlign = "center";
-    ctx.fillText("你", x, y + 24);
+    renderer.render(scene, camera);
 }
 
 // ===== 主迴圈 =====
@@ -873,8 +1167,9 @@ function loop(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     tNow = now;
+    player.moved = false;
     if (!dialogOpen && !overlayOpen) {
-        const speed = 5 * T * dt;
+        const speed = 4.5 * T * dt;
         let dx = 0, dy = 0;
         if (keys.ArrowLeft || keys.a) dx -= 1;
         if (keys.ArrowRight || keys.d) dx += 1;
@@ -883,26 +1178,26 @@ function loop(now) {
         if (dx || dy) {
             player.path = [];
             const len = Math.hypot(dx, dy);
-            moveBy(dx / len * speed, dy / len * speed);
+            if (moveBy(dx / len * speed, dy / len * speed)) { player.moved = true; player.dir = [dx, dy]; }
         } else if (player.path.length) {
             const [tx, ty] = player.path[0];
             const gx = tx * T + T / 2, gy = ty * T + T / 2;
             const ddx = gx - player.x, ddy = gy - player.y;
             const dist = Math.hypot(ddx, ddy);
+            if (dist > 0.01) { player.moved = true; player.dir = [ddx, ddy]; }
             if (dist <= speed) { moveBy(ddx, ddy); player.path.shift(); }
             else if (!moveBy(ddx / dist * speed, ddy / dist * speed)) player.path = [];
-            if (!player.path.length && targets().some(id => nearest() && nearest().id === id)) {
-                // 帶路到達目標就自動對話
-                interact(nearest().id);
+            if (!player.path.length) {
+                const n = nearest();
+                if (n && targets().includes(n.id)) interact(n.id);
             }
         }
-        // 進出 C3 計次
         const inside = grid[tileOf(player.y)][tileOf(player.x)] === "c";
         if (inside && !loop.inside) metrics.entries++;
         loop.inside = inside;
         updateHud();
     }
-    draw();
+    update3D(dt);
     requestAnimationFrame(loop);
 }
 
@@ -1024,34 +1319,51 @@ window.addEventListener("keyup", e => {
 });
 window.addEventListener("blur", () => Object.keys(keys).forEach(k => { keys[k] = false; }));
 
-canvas.addEventListener("pointerdown", e => {
+function onPointer(e) {
     if (dialogOpen || overlayOpen) return;
-    canvas.focus();
-    const rect = canvas.getBoundingClientRect();
-    const wx = (e.clientX - rect.left) / scale + camX;
-    const wy = (e.clientY - rect.top) / scale + camY;
-    const tx = tileOf(wx), ty = tileOf(wy);
-    const o = objAt(tx, ty);
+    const el = renderer.domElement;
+    el.focus();
+    const rect = el.getBoundingClientRect();
+    const v = new THREE.Vector2((e.clientX - rect.left) / rect.width * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(v, camera);
+    const hit = ray.intersectObjects(pickables, true).find(h => h.object.userData.objId && !h.object.isSprite);
+    const o = hit ? objById[hit.object.userData.objId] : null;
     if (o && o.kind !== "pallet") {
         if (nearest() === o) { interact(o.id); return; }
         const p = bfs(neighborsOf(o));
         if (p) player.path = p;
         return;
     }
+    const g = ray.intersectObject(groundPlane)[0];
+    if (!g) return;
+    const tx = Math.floor(g.point.x), ty = Math.floor(g.point.z);
     if (!solid(tx, ty)) {
         const p = bfs([[tx, ty]]);
         if (p) player.path = p;
     }
-});
+}
 
 document.getElementById("talk-btn").onclick = tryTalk;
 document.getElementById("guide-btn").onclick = guide;
 document.getElementById("gloss").onclick = e => { e.currentTarget.hidden = true; };
-window.addEventListener("resize", resize);
 
-resize();
-startNight1();
-requestAnimationFrame(loop);
+function boot() {
+    init3D();
+    renderer.domElement.addEventListener("pointerdown", onPointer);
+    window.addEventListener("resize", resize3D);
+    startNight1();
+    requestAnimationFrame(loop);
+}
+
+if (typeof THREE === "undefined") {
+    document.getElementById("overlay").innerHTML = '<div class="card"><h2>3D 場景載入失敗</h2><p>這個遊戲需要從 cdnjs 載入 three.js。請確認網路連線後重新整理頁面。</p></div>';
+} else {
+    const fontsReady = document.fonts ? Promise.race([
+        Promise.all([document.fonts.load("700 44px 'Noto Sans TC'"), document.fonts.load("700 20px 'Chakra Petch'")]),
+        new Promise(r => setTimeout(r, 2500))
+    ]) : Promise.resolve();
+    fontsReady.catch(() => {}).finally(boot);
+}
 </script>
 </body>
 </html>
