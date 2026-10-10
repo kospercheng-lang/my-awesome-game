@@ -3,579 +3,742 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>冷鏈庫 AC1</title>
+    <title>AC1 冷庫 Demo</title>
     <style>
         :root {
-            --bg: #1e2a36;
-            --panel: #2b3a4a;
-            --panel-2: #22303d;
-            --text: #eef3f7;
-            --muted: #9fb0c0;
-            --border: #3d5063;
-            --ok: #2ecc71;
-            --warn: #f1c40f;
-            --alarm: #e74c3c;
-            --accent: #3fa9f5;
+            --orange: #e8820c;
+            --orange-soft: #fdf0e1;
+            --teal: #138a8a;
+            --navy: #1d3b4f;
+            --text: #222;
+            --muted: #6b7280;
+            --border: #e2e5ea;
+            --bg: #f6f7f9;
+            --panel: #fff;
+            --run: #2e9e5b;
+            --defrost: #2f7fd8;
+            --fault: #d64545;
+            --stop: #8a96a3;
+            --unknown: #c3cad1;
+            --line-d: #2f7fd8;
         }
 
         * { box-sizing: border-box; }
 
         body {
-            font-family: "Microsoft JhengHei", sans-serif;
-            background-color: var(--bg);
+            font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+            background: var(--bg);
             color: var(--text);
             margin: 0;
-            padding: 20px 16px;
+            line-height: 1.5;
         }
 
-        h1 { margin: 0 0 4px; text-align: center; }
-        .subtitle { text-align: center; color: var(--muted); margin: 0 0 20px; }
+        header {
+            background: var(--orange);
+            color: #fff;
+            padding: 28px 16px 24px;
+        }
+        .wrap { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+        header .wrap { padding: 0; }
+        header .eyebrow { font-size: 0.9rem; opacity: 0.9; }
+        header h1 { margin: 4px 0 6px; font-size: 1.9rem; }
+        header .tagline { font-size: 1.15rem; font-weight: bold; }
+        .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+        .chip {
+            background: rgba(255,255,255,0.18);
+            border: 1px solid rgba(255,255,255,0.4);
+            border-radius: 14px;
+            padding: 2px 12px;
+            font-size: 0.9rem;
+        }
 
-        .layout {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 16px;
-            max-width: 1200px;
-            margin: 0 auto;
+        main { padding: 20px 0 40px; }
+        section { margin-bottom: 20px; }
+        h2 {
+            font-size: 1.15rem;
+            margin: 0 0 12px;
+            padding-left: 10px;
+            border-left: 4px solid var(--orange);
         }
 
         .panel {
             background: var(--panel);
+            border: 1px solid var(--border);
             border-radius: 10px;
             padding: 16px;
             min-width: 0;
         }
-        .panel h2 { margin: 0 0 12px; font-size: 1.1rem; }
 
-        /* 溫度監控 */
-        .temp-now {
+        /* 控制列 */
+        .toolbar {
             display: flex;
-            align-items: baseline;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-        #temp-value { font-size: 3rem; font-weight: bold; }
-        .status-badge {
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-weight: bold;
-            color: #111;
-        }
-        .status-ok { background: var(--ok); }
-        .status-warn { background: var(--warn); }
-        .status-alarm { background: var(--alarm); color: #fff; }
-
-        #temp-chart {
-            width: 100%;
-            height: 160px;
-            background: var(--panel-2);
-            border-radius: 6px;
-            display: block;
-        }
-
-        .range-row {
-            display: flex;
-            gap: 8px;
-            align-items: center;
             flex-wrap: wrap;
-            margin-top: 10px;
-            color: var(--muted);
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
         }
-
-        /* 儲位 */
-        .slots {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 6px;
+        .segmented {
+            display: inline-flex;
+            border: 2px solid var(--navy);
+            border-radius: 8px;
+            overflow: hidden;
         }
-        .slot {
-            background: var(--panel-2);
-            border: 2px solid var(--border);
-            border-radius: 6px;
-            padding: 8px 4px;
-            text-align: center;
-            cursor: pointer;
-            font-size: 0.85rem;
-            min-height: 64px;
-        }
-        .slot:hover { border-color: var(--accent); }
-        .slot.selected { border-color: var(--accent); background: #2f4a63; }
-        .slot .code { font-weight: bold; }
-        .slot .qty { color: var(--muted); margin-top: 4px; }
-        .slot.expiring { border-color: var(--warn); }
-        .slot.expired { border-color: var(--alarm); }
-
-        #slot-detail { margin-top: 12px; font-size: 0.9rem; }
-        #slot-detail table { width: 100%; border-collapse: collapse; }
-        #slot-detail th, #slot-detail td {
-            text-align: left;
-            padding: 4px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        /* 表單 */
-        form { display: grid; gap: 8px; }
-        label { display: grid; gap: 4px; font-size: 0.9rem; color: var(--muted); }
-        input, select {
-            padding: 8px;
-            border-radius: 5px;
-            border: 1px solid var(--border);
-            background: var(--panel-2);
-            color: var(--text);
-            font-size: 1rem;
-            width: 100%;
-        }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-
-        button {
-            padding: 10px 16px;
-            font-size: 1rem;
-            cursor: pointer;
-            background-color: var(--accent);
-            color: white;
+        .segmented button {
             border: none;
-            border-radius: 5px;
+            background: #fff;
+            color: var(--navy);
+            padding: 8px 14px;
+            font-size: 0.95rem;
+            font-weight: bold;
+            cursor: pointer;
+            font-family: inherit;
         }
-        button:hover { filter: brightness(1.1); }
-        button.secondary { background: #55687a; }
-        .tabs button.active { outline: 2px solid white; }
+        .segmented button.active { background: var(--navy); color: #fff; }
 
-        #form-msg { min-height: 1.2em; font-size: 0.9rem; }
-        .msg-error { color: var(--alarm); }
-        .msg-ok { color: var(--ok); }
+        .btn {
+            border: 1px solid var(--border);
+            background: #fff;
+            color: var(--text);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-family: inherit;
+        }
+        .btn:hover { border-color: var(--orange); }
+        .btn.primary { background: var(--orange); color: #fff; border-color: var(--orange); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .scenario-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+
+        .grid-main {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 340px;
+            gap: 16px;
+        }
+        @media (max-width: 900px) {
+            .grid-main { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        /* 平面圖 */
+        #plan { width: 100%; height: auto; display: block; }
+        .room-rect { fill: #eef5fb; stroke: #9fb3c4; stroke-width: 2; transition: fill 0.4s; }
+        .room-rect.chilled { fill: #f1f8f3; }
+        .room-rect.warn { fill: #fff6dc; }
+        .room-rect.alarm { fill: #fde3e3; stroke: var(--fault); }
+        .room-name { font-size: 18px; font-weight: bold; fill: var(--navy); }
+        .room-type { font-size: 12px; fill: var(--muted); }
+        .room-temp { font-size: 26px; font-weight: bold; fill: var(--navy); }
+        .room-temp.alarm { fill: var(--fault); }
+        .fan-label { font-size: 11px; fill: var(--muted); }
+        .fan-text { font-size: 12px; font-weight: bold; fill: #fff; pointer-events: none; }
+        .fan-node { cursor: pointer; }
+        .fan-node circle { transition: fill 0.3s; stroke: #fff; stroke-width: 2; }
+        .fan-node.located circle { stroke: var(--fault); stroke-width: 4; }
+        .cable-power { stroke: #f2c230; stroke-width: 7; fill: none; stroke-linecap: round; }
+        .cable-d { stroke: var(--line-d); stroke-width: 2.5; fill: none; stroke-dasharray: 6 8; }
+        .ac1-on .cable-d { animation: flow 1.2s linear infinite; }
+        .ac1-off .cable-d { display: none; }
+        .ac1-off .cable-power { stroke: #cfd5db; }
+        @keyframes flow { to { stroke-dashoffset: -28; } }
+
+        .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
+        .legend span::before {
+            content: "";
+            display: inline-block;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            margin-right: 4px;
+            background: var(--c);
+        }
+
+        /* 監控面板 */
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .stat {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+        .stat .k { font-size: 0.8rem; color: var(--muted); }
+        .stat .v { font-size: 1.25rem; font-weight: bold; color: var(--navy); }
+
+        .alarm-card {
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+            background: #eef7f1;
+            border: 1px solid #bfe3cc;
+        }
+        .alarm-card.warn { background: #fff6dc; border-color: #f1d27a; }
+        .alarm-card.alarm { background: #fde3e3; border-color: #f0a5a5; }
+        .alarm-card .title { font-weight: bold; margin-bottom: 4px; }
+        .alarm-card .locate { font-size: 1.2rem; font-weight: bold; color: var(--fault); }
+        .progress { height: 6px; background: #f3c7c7; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+        .progress div { height: 100%; background: var(--fault); width: 0; transition: width 0.4s; }
 
         #log {
             height: 220px;
             overflow-y: auto;
-            background: #18222c;
-            padding: 10px;
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 8px 10px;
             font-size: 0.85rem;
-            border-radius: 5px;
         }
-        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 2px; }
-        .log-entry.alarm { color: var(--alarm); }
-        .log-entry.warn { color: var(--warn); }
+        .log-entry { padding: 3px 0; border-bottom: 1px solid var(--border); }
+        .log-entry .t { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+        .log-entry.alarm { color: var(--fault); }
+        .log-entry.warn { color: #a06a00; }
+        .log-entry.locate { color: var(--teal); font-weight: bold; }
+
+        /* 架構 */
+        .arch {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+            align-items: stretch;
+        }
+        .arch .box {
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+            background: #fff;
+            font-size: 0.9rem;
+            position: relative;
+        }
+        .arch .box strong { display: block; color: var(--navy); margin-bottom: 4px; }
+        .arch .box.ac1 { border-color: var(--orange); background: var(--orange-soft); }
+        .arch .box.keep { border-style: dashed; }
+        @media (max-width: 700px) {
+            .arch { grid-template-columns: minmax(0, 1fr); }
+        }
+        .note { font-size: 0.85rem; color: var(--muted); margin-top: 10px; }
+
+        /* 比較表 */
+        .table-wrap { overflow-x: auto; }
+        table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 640px; }
+        th, td { border-bottom: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
+        th { background: var(--navy); color: #fff; font-weight: normal; }
+        td.c { text-align: center; white-space: nowrap; }
+        tr.ac1 td { background: var(--orange-soft); font-weight: bold; }
+
+        .compare {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        @media (max-width: 700px) { .compare { grid-template-columns: 1fr; } }
+        .compare .panel h3 { margin: 0 0 8px; font-size: 1rem; }
+        .compare ol { margin: 0; padding-left: 20px; }
+        .compare .now { border-top: 4px solid var(--stop); }
+        .compare .with { border-top: 4px solid var(--orange); }
+
+        footer { font-size: 0.8rem; color: var(--muted); padding-bottom: 30px; }
+        footer ul { margin: 6px 0; padding-left: 20px; }
     </style>
 </head>
 <body>
 
-    <h1>❄️ 冷鏈庫 AC1</h1>
-    <p class="subtitle">庫區溫度監控・儲位管理・入出庫作業</p>
-
-    <div class="layout">
-        <!-- 溫度監控 -->
-        <section class="panel">
-            <h2>🌡️ 溫度監控</h2>
-            <div class="temp-now">
-                <span id="temp-value">--</span>
-                <span id="temp-status" class="status-badge status-ok">正常</span>
-            </div>
-            <canvas id="temp-chart"></canvas>
-            <div class="range-row">
-                允許範圍
-                <input id="temp-min" type="number" step="0.5" style="width:80px">
-                ~
-                <input id="temp-max" type="number" step="0.5" style="width:80px">
-                °C
-                <button class="secondary" id="door-btn" type="button">模擬開門</button>
-            </div>
-        </section>
-
-        <!-- 儲位 -->
-        <section class="panel">
-            <h2>📦 儲位一覽</h2>
-            <div class="slots" id="slots"></div>
-            <div id="slot-detail">點選儲位查看庫存</div>
-        </section>
-
-        <!-- 入出庫 -->
-        <section class="panel">
-            <h2>📝 入出庫作業</h2>
-            <div class="tabs">
-                <button type="button" id="tab-in" class="active">入庫</button>
-                <button type="button" id="tab-out" class="secondary">出庫</button>
-            </div>
-            <form id="stock-form">
-                <label>品名 <input id="f-name" required placeholder="例：冷凍雞腿"></label>
-                <div class="form-row">
-                    <label>批號 <input id="f-lot" required placeholder="例：L20261010"></label>
-                    <label>數量（箱） <input id="f-qty" type="number" min="1" required></label>
-                </div>
-                <div class="form-row">
-                    <label>儲位 <select id="f-slot"></select></label>
-                    <label id="exp-label">有效期限 <input id="f-exp" type="date"></label>
-                </div>
-                <button type="submit" id="submit-btn">確認入庫</button>
-                <div id="form-msg"></div>
-            </form>
-        </section>
-
-        <!-- 紀錄 -->
-        <section class="panel">
-            <h2>📋 作業紀錄</h2>
-            <div id="log"></div>
-            <div style="margin-top:10px; text-align:right;">
-                <button class="secondary" id="reset-btn" type="button">清除所有資料</button>
-            </div>
-        </section>
+<header>
+    <div class="wrap">
+        <div class="eyebrow">主流電子 AC1｜固定式冷鏈情境 Demo</div>
+        <h1>❄️ AC1 冷庫設備狀態接入</h1>
+        <div class="tagline">告警當下，就知道是哪一台</div>
+        <div class="chips">
+            <span class="chip">北部食品冷凍物流中心（假設情境）</span>
+            <span class="chip">8 間冷庫</span>
+            <span class="chip">32 台冷風機</span>
+            <span class="chip">96 點狀態（運轉／故障／除霜）</span>
+            <span class="chip">同一供電區域</span>
+        </div>
     </div>
+</header>
+
+<main class="wrap">
+
+    <!-- 模擬 -->
+    <section>
+        <h2>夜班異常查找（S1）模擬</h2>
+        <div class="toolbar">
+            <div class="segmented" role="group" aria-label="接入方式">
+                <button type="button" id="mode-now">現況（未接入）</button>
+                <button type="button" id="mode-ac1" class="active">AC1 接入</button>
+            </div>
+            <div class="scenario-btns">
+                <button type="button" class="btn primary" data-scenario="defrost">情境一：C3 除霜未停</button>
+                <button type="button" class="btn" data-scenario="fault">情境二：C6 風機故障</button>
+                <button type="button" class="btn" data-scenario="stop">情境三：C7 風機停轉</button>
+                <button type="button" class="btn" id="speed-btn">速度 ×1</button>
+                <button type="button" class="btn" id="reset-btn">復歸</button>
+            </div>
+        </div>
+
+        <div class="grid-main">
+            <div class="panel">
+                <svg id="plan" viewBox="0 0 1000 540" aria-label="冷庫平面與 AC1 配線示意"></svg>
+                <div class="legend">
+                    <span style="--c: var(--run)">運轉</span>
+                    <span style="--c: var(--defrost)">除霜</span>
+                    <span style="--c: var(--fault)">故障</span>
+                    <span style="--c: var(--stop)">停轉</span>
+                    <span style="--c: var(--unknown)">無資料</span>
+                    <span style="--c: #f2c230">L/N 配電分支</span>
+                    <span style="--c: var(--line-d)">AC1 D 線</span>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="stats">
+                    <div class="stat"><div class="k">模擬時間</div><div class="v" id="clock">02:00</div></div>
+                    <div class="stat"><div class="k">平台可見設備點</div><div class="v" id="points">96 / 96</div></div>
+                    <div class="stat"><div class="k">輪詢一輪（試算）</div><div class="v" id="poll">約 3.2 秒</div></div>
+                    <div class="stat"><div class="k">告警 → 定位</div><div class="v" id="ttl">—</div></div>
+                </div>
+                <div class="alarm-card" id="alarm-card">
+                    <div class="title">✅ 全區正常</div>
+                    <div>選擇上方情境，模擬夜班異常。</div>
+                </div>
+                <div id="log" aria-live="polite"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 比較 -->
+    <section>
+        <h2>同一個夜晚，兩種結果</h2>
+        <div class="compare">
+            <div class="panel now">
+                <h3>現況：只看得到庫溫</h3>
+                <ol>
+                    <li>中央監控顯示 C3 庫溫上升、發出告警</li>
+                    <li>看不到是哪一台冷風機、是運轉、故障還是除霜</li>
+                    <li>值班人員穿防寒衣進庫，逐台排查約 45 分鐘（說明值）</li>
+                    <li>事後沒有設備層紀錄，同樣問題反覆發生</li>
+                </ol>
+            </div>
+            <div class="panel with">
+                <h3>AC1 接入：告警當下就看到哪一台</h3>
+                <ol>
+                    <li>每台冷風機的運轉、故障、除霜狀態沿配電分支接回平台</li>
+                    <li>告警當下即顯示「C3 第 2 台除霜未停」</li>
+                    <li>直接決定進庫處理或叫修，縮小查修範圍</li>
+                    <li>告警事件自動留下設備層紀錄，可追溯</li>
+                </ol>
+            </div>
+        </div>
+    </section>
+
+    <!-- 架構 -->
+    <section>
+        <h2>AC1 在哪一層：只延伸、不取代</h2>
+        <div class="panel">
+            <div class="arch">
+                <div class="box keep"><strong>設備層</strong>冷風機、除霜、控制器<br>（保留原控制與保護）</div>
+                <div class="box ac1"><strong>AC1 介面模組</strong>讀取 Modbus RTU／乾接點</div>
+                <div class="box ac1"><strong>D 線</strong>沿既有配電分支<br>樹狀布設，L/N 供電</div>
+                <div class="box ac1"><strong>Gateway</strong>彙整 96 點狀態<br>上拋指定平台</div>
+                <div class="box keep"><strong>既有監控平台</strong>告警、判讀與處置<br>（不取代）</div>
+            </div>
+            <p class="note">AC1 位於實體接入層，提供接入通道；冷凍控制、安全聯鎖、告警判讀由原控制器與平台負責。額定 9,600 bps、配線總長 300 m（含分支）；Modbus 輪詢 30 點一輪約 1 秒（技術方試算，C 級）。</p>
+        </div>
+    </section>
+
+    <!-- 方案比較 -->
+    <section>
+        <h2>為什麼 AC1 在冷庫有機會勝出</h2>
+        <div class="panel table-wrap">
+            <table>
+                <tr>
+                    <th>方案</th><th>夜班看得到哪一台</th><th>事件紀錄</th><th>營運中建置</th>
+                    <th>庫板內穩定</th><th>台灣可取得</th><th>卡在哪裡</th>
+                </tr>
+                <tr><td>RS-485 加閘道</td><td class="c">●</td><td class="c">●</td><td class="c">○</td><td class="c">●</td><td class="c">●</td><td>跨 8 庫串接，須與電力線相距 30 cm、另設通訊路徑</td></tr>
+                <tr><td>乙太網路／PoE</td><td class="c">●</td><td class="c">●</td><td class="c">○</td><td class="c">●</td><td class="c">●</td><td>無網路時須逐點拉線與交換器；PoE 只供小功率節點</td></tr>
+                <tr><td>Wi-Fi</td><td class="c">◐</td><td class="c">●</td><td class="c">◐</td><td class="c">○</td><td class="c">●</td><td>庫板遮蔽，告警當下可能斷線</td></tr>
+                <tr><td>寬頻 PLC</td><td class="c">◐</td><td class="c">●</td><td class="c">●</td><td class="c">◐</td><td class="c">○</td><td>除霜、壓縮機啟停時通訊待證；台灣查無具名型號</td></tr>
+                <tr><td>原廠生態</td><td class="c">●</td><td class="c">●</td><td class="c">○</td><td class="c">●</td><td class="c">●</td><td>新增接入須手拉手、不可分支</td></tr>
+                <tr><td>單一功能替代</td><td class="c">○</td><td class="c">◐</td><td class="c">●</td><td class="c">◐</td><td class="c">●</td><td>只看到庫溫，不知是哪一台</td></tr>
+                <tr><td>維持現狀</td><td class="c">○</td><td class="c">○</td><td class="c">—</td><td class="c">—</td><td class="c">—</td><td>進庫排查約 45 分鐘，無事件紀錄</td></tr>
+                <tr class="ac1"><td>AC1</td><td class="c">●（C）</td><td class="c">●</td><td class="c">◐＊</td><td class="c">●</td><td class="c">◐</td><td>須增設 D 線（沿既有配電路徑）；低溫實測、第 294 條、備品</td></tr>
+            </table>
+            <p class="note">● 滿足　◐ 部分／待確認　○ 不滿足　＊跨分路串接依企業方資料假設可行　（C）專家／企業假設</p>
+        </div>
+    </section>
+
+    <footer>
+        <strong>說明</strong>
+        <ul>
+            <li>情境（8 庫、32 台冷風機、約 45 分鐘排查）與時間、數字皆為說明用，非實測；模擬中的溫度變化為示意。</li>
+            <li>待補證據：約 -25°C 低溫凝露實測、1–2 款冷庫控制器對接、同一配置圖工程量比較、D 線同管之法規判讀（用戶用電設備裝置規則第 294 條）。</li>
+            <li>資料來源：工研院產科國際所 GTM 方法論共創計畫｜AC1 應用情境篩選與冷鏈深入洞察（2026/10），討論用資料，內容不構成任何承諾。</li>
+        </ul>
+    </footer>
+</main>
 
 <script>
-    // --- 設定 ---
-    const ZONE = "AC1";
-    const SLOT_COUNT = 12;          // AC1-01 ~ AC1-12
-    const SLOT_CAPACITY = 50;       // 每個儲位最多 50 箱
-    const EXPIRY_WARN_DAYS = 7;     // 7 天內到期提示
-    const STORAGE_KEY = "cold-chain-ac1";
-
-    const defaultState = {
-        tempMin: -25,
-        tempMax: -18,
-        slots: {},   // { "AC1-01": [ { name, lot, qty, exp, inAt } ] }
-        logs: []
+    // --- 情境設定（固定情境：8 間冷庫 × 4 台冷風機 × 3 狀態 = 96 點） ---
+    const FANS_PER_ROOM = 4;
+    const ROOMS = [
+        { id: "C1", type: "freezer" }, { id: "C2", type: "freezer" },
+        { id: "C3", type: "freezer" }, { id: "C4", type: "freezer" },
+        { id: "C5", type: "freezer" }, { id: "C6", type: "chilled" },
+        { id: "C7", type: "chilled" }, { id: "C8", type: "chilled" }
+    ];
+    const ROOM_SPEC = {
+        freezer: { label: "冷凍 -25 ~ -18°C", setpoint: -22, max: -18 },
+        chilled: { label: "冷藏 0 ~ 5°C", setpoint: 2, max: 5 }
     };
+    const STATE_INFO = {
+        run: { text: "運轉", color: "var(--run)" },
+        defrost: { text: "除霜", color: "var(--defrost)" },
+        fault: { text: "故障", color: "var(--fault)" },
+        stop: { text: "停轉", color: "var(--stop)" }
+    };
+    const HEAT = { run: 0, defrost: 0.4, fault: 0.4, stop: 0.35 };  // 每分鐘熱負荷（示意）
+    const COOLING = 0.12;                                          // 冷卻係數（示意）
+    const DEFROST_STEP_MIN = 10;                                   // 每台除霜時間（示意）
+    const DEFROST_TIMEOUT_MIN = 20;                                // 平台端除霜逾時規則（示意）
+    const MANUAL_CHECK_MIN = 45;                                   // 進庫逐台排查（說明值）
+    const POINTS = ROOMS.length * FANS_PER_ROOM * 3;
 
-    let state = loadState();
-    let mode = "in";               // "in" 入庫 / "out" 出庫
-    let selectedSlot = null;
-    let temps = [];                // 最近溫度紀錄
-    let doorOpenTicks = 0;         // 模擬開門造成升溫
-    let lastStatus = "ok";
+    let mode = "ac1";        // "now" 現況 / "ac1" AC1 接入
+    let speed = 1;
+    let minute = 0;          // 模擬分鐘（自 02:00 起）
+    let timer = null;
+    let rooms, scenario, alarm;
 
-    const slotCodes = Array.from({ length: SLOT_COUNT }, (_, i) =>
-        `${ZONE}-${String(i + 1).padStart(2, "0")}`);
-
-    // --- 資料存取 ---
-    function loadState() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) return Object.assign({}, defaultState, JSON.parse(raw));
-        } catch (e) { /* 無法讀取時使用預設值 */ }
-        return JSON.parse(JSON.stringify(defaultState));
+    function initState() {
+        rooms = ROOMS.map(r => ({
+            ...r,
+            temp: ROOM_SPEC[r.type].setpoint + (Math.random() - 0.5),
+            fans: Array.from({ length: FANS_PER_ROOM }, () => ({ state: "run", since: 0 })),
+            alarm: false
+        }));
+        scenario = null;
+        alarm = null;        // { room, fan, at, locatedAt, cause }
+        minute = 0;
     }
 
-    function saveState() {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        } catch (e) { /* 無法儲存時僅保留在記憶體 */ }
+    // --- 平面圖 ---
+    const ROOM_W = 200, ROOM_H = 215, ROOM_X0 = 150, GAP = 12;
+    const TRUNK_Y = 270;
+
+    function roomBox(i) {
+        const col = i % 4, row = Math.floor(i / 4);
+        return {
+            x: ROOM_X0 + col * (ROOM_W + GAP),
+            y: row === 0 ? 20 : TRUNK_Y + 35,
+            row
+        };
     }
 
-    // --- 溫度監控 ---
-    function readSensor() {
-        const target = (state.tempMin + state.tempMax) / 2;
-        const prev = temps.length ? temps[temps.length - 1] : target;
-        let next = prev + (target - prev) * 0.2 + (Math.random() - 0.5) * 0.6;
-        if (doorOpenTicks > 0) {
-            next += 1.2;
-            doorOpenTicks--;
-        }
-        return Math.round(next * 10) / 10;
+    function fanPos(i, f) {
+        const b = roomBox(i);
+        return {
+            x: b.x + 30 + f * ((ROOM_W - 60) / (FANS_PER_ROOM - 1)),
+            y: b.row === 0 ? b.y + 40 : b.y + ROOM_H - 40
+        };
     }
 
-    function getTempStatus(t) {
-        const margin = 1;
-        if (t < state.tempMin || t > state.tempMax) return "alarm";
-        if (t < state.tempMin + margin || t > state.tempMax - margin) return "warn";
-        return "ok";
-    }
+    function buildPlan() {
+        const svg = document.getElementById("plan");
+        let html = "";
 
-    function tickTemperature() {
-        const t = readSensor();
-        temps.push(t);
-        if (temps.length > 60) temps.shift();
+        // 配電盤
+        html += `<rect x="20" y="${TRUNK_Y - 70}" width="90" height="140" rx="6" fill="#e9edf1" stroke="#9aa5b1" stroke-width="2"/>
+                 <text x="65" y="${TRUNK_Y - 40}" text-anchor="middle" font-size="14" font-weight="bold" fill="#1d3b4f">配電盤</text>
+                 <text x="65" y="${TRUNK_Y - 22}" text-anchor="middle" font-size="11" fill="#6b7280">同一低壓配電</text>
+                 <rect x="35" y="${TRUNK_Y + 5}" width="60" height="44" rx="4" fill="#fdf0e1" stroke="#e8820c" stroke-width="2"/>
+                 <text x="65" y="${TRUNK_Y + 25}" text-anchor="middle" font-size="12" font-weight="bold" fill="#e8820c">Gateway</text>
+                 <text x="65" y="${TRUNK_Y + 41}" text-anchor="middle" font-size="10" fill="#6b7280">→ 監控平台</text>`;
 
-        const status = getTempStatus(t);
-        const badge = document.getElementById("temp-status");
-        document.getElementById("temp-value").innerText = `${t.toFixed(1)}°C`;
-        badge.className = `status-badge status-${status}`;
-        badge.innerText = { ok: "正常", warn: "接近上下限", alarm: "超出範圍！" }[status];
-
-        if (status !== lastStatus) {
-            if (status === "alarm") log(`⚠️ 溫度異常：${t.toFixed(1)}°C，超出允許範圍`, "alarm");
-            else if (lastStatus === "alarm") log(`溫度恢復：${t.toFixed(1)}°C`);
-            lastStatus = status;
-        }
-        drawChart();
-    }
-
-    function drawChart() {
-        const canvas = document.getElementById("temp-chart");
-        const ctx = canvas.getContext("2d");
-        const w = canvas.width = canvas.clientWidth;
-        const h = canvas.height = canvas.clientHeight;
-        ctx.clearRect(0, 0, w, h);
-
-        const lo = state.tempMin - 5;
-        const hi = state.tempMax + 5;
-        const y = v => h - ((v - lo) / (hi - lo)) * h;
-
-        // 允許範圍色帶
-        ctx.fillStyle = "rgba(46, 204, 113, 0.12)";
-        ctx.fillRect(0, y(state.tempMax), w, y(state.tempMin) - y(state.tempMax));
-        ctx.strokeStyle = "rgba(46, 204, 113, 0.6)";
-        ctx.setLineDash([4, 4]);
-        [state.tempMin, state.tempMax].forEach(v => {
-            ctx.beginPath();
-            ctx.moveTo(0, y(v));
-            ctx.lineTo(w, y(v));
-            ctx.stroke();
+        // 冷庫
+        rooms.forEach((r, i) => {
+            const b = roomBox(i);
+            const spec = ROOM_SPEC[r.type];
+            const labelY = b.row === 0 ? b.y + ROOM_H - 70 : b.y + 50;
+            html += `<rect id="room-${i}" class="room-rect ${r.type}" x="${b.x}" y="${b.y}" width="${ROOM_W}" height="${ROOM_H}" rx="6"/>
+                     <text class="room-name" x="${b.x + 14}" y="${labelY}">${r.id}</text>
+                     <text class="room-type" x="${b.x + 14}" y="${labelY + 18}">${spec.label}</text>
+                     <text id="temp-${i}" class="room-temp" x="${b.x + 14}" y="${labelY + 50}">--</text>`;
+            // 庫門（面向走道）
+            const doorY = b.row === 0 ? b.y + ROOM_H - 4 : b.y - 4;
+            html += `<rect x="${b.x + ROOM_W / 2 - 25}" y="${doorY}" width="50" height="8" fill="#9fb3c4"/>`;
         });
-        ctx.setLineDash([]);
 
-        // 溫度曲線
-        if (temps.length < 2) return;
-        ctx.strokeStyle = "#3fa9f5";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        temps.forEach((t, i) => {
-            const x = (i / 59) * w;
-            i === 0 ? ctx.moveTo(x, y(t)) : ctx.lineTo(x, y(t));
+        // 配電主幹與分支（L/N 黃色 + D 線藍色虛線，同一路徑）
+        const trunkEnd = ROOM_X0 + 4 * (ROOM_W + GAP) - GAP - 10;
+        const paths = [`M110 ${TRUNK_Y} H${trunkEnd}`];
+        rooms.forEach((r, i) => {
+            const b = roomBox(i);
+            const branchX = b.x + ROOM_W / 2 + 40;
+            const fy = fanPos(i, 0).y;
+            paths.push(`M${branchX} ${TRUNK_Y} V${fy}`);
+            paths.push(`M${fanPos(i, 0).x} ${fy} H${fanPos(i, FANS_PER_ROOM - 1).x}`);
         });
-        ctx.stroke();
-    }
+        paths.forEach(d => { html += `<path class="cable-power" d="${d}"/>`; });
+        paths.forEach(d => { html += `<path class="cable-d" d="${d}"/>`; });
+        html += `<text x="${trunkEnd - 4}" y="${TRUNK_Y - 10}" text-anchor="end" font-size="12" fill="#6b7280">AC1 Cable（L/N 供電＋獨立 D 線）沿配電分支</text>`;
 
-    // --- 儲位 ---
-    function slotQty(code) {
-        return (state.slots[code] || []).reduce((sum, item) => sum + item.qty, 0);
-    }
+        // 冷風機節點
+        rooms.forEach((r, i) => {
+            for (let f = 0; f < FANS_PER_ROOM; f++) {
+                const p = fanPos(i, f);
+                const labelDy = roomBox(i).row === 0 ? 32 : -24;
+                html += `<g class="fan-node" id="fan-${i}-${f}" data-room="${i}" data-fan="${f}">
+                            <circle cx="${p.x}" cy="${p.y}" r="16" fill="var(--run)"/>
+                            <text class="fan-text" x="${p.x}" y="${p.y + 4}" text-anchor="middle">${f + 1}</text>
+                            <text class="fan-label" id="fan-label-${i}-${f}" x="${p.x}" y="${p.y + labelDy}" text-anchor="middle">運轉</text>
+                         </g>`;
+            }
+        });
 
-    function daysUntil(dateStr) {
-        if (!dateStr) return Infinity;
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        return Math.round((new Date(dateStr) - today) / 86400000);
-    }
-
-    function renderSlots() {
-        const wrap = document.getElementById("slots");
-        wrap.innerHTML = "";
-        slotCodes.forEach(code => {
-            const items = state.slots[code] || [];
-            const minDays = Math.min(...items.map(i => daysUntil(i.exp)), Infinity);
-            const el = document.createElement("div");
-            el.className = "slot";
-            if (code === selectedSlot) el.classList.add("selected");
-            if (minDays < 0) el.classList.add("expired");
-            else if (minDays <= EXPIRY_WARN_DAYS) el.classList.add("expiring");
-            el.innerHTML = `
-                <div class="code">${code}</div>
-                <div class="qty">${slotQty(code)} / ${SLOT_CAPACITY} 箱</div>
-            `;
-            el.onclick = () => {
-                selectedSlot = code;
-                document.getElementById("f-slot").value = code;
-                renderSlots();
-                renderSlotDetail();
-            };
-            wrap.appendChild(el);
+        svg.innerHTML = html;
+        svg.querySelectorAll(".fan-node").forEach(g => {
+            g.addEventListener("click", () => {
+                const r = rooms[+g.dataset.room];
+                const fan = r.fans[+g.dataset.fan];
+                if (mode === "now") {
+                    log(`${r.id}-${+g.dataset.fan + 1}：未接入，平台無設備狀態`);
+                } else {
+                    log(`${r.id} 第 ${+g.dataset.fan + 1} 台：${STATE_INFO[fan.state].text}（已 ${minute - fan.since} 分）`);
+                }
+            });
         });
     }
 
-    function renderSlotDetail() {
-        const box = document.getElementById("slot-detail");
-        if (!selectedSlot) {
-            box.innerText = "點選儲位查看庫存";
+    // --- 模擬 ---
+    function setFan(room, f, state) {
+        const fan = room.fans[f];
+        if (fan.state === state) return;
+        const prev = fan.state;
+        fan.state = state;
+        fan.since = minute;
+        if (mode === "ac1") {
+            const level = state === "fault" ? "alarm" : "";
+            log(`${room.id} 第 ${f + 1} 台：${STATE_INFO[prev].text} → ${STATE_INFO[state].text}`, level);
+        }
+    }
+
+    function stepScenario() {
+        if (!scenario) return;
+        const room = rooms[scenario.room];
+        const t = minute - scenario.start;
+
+        if (scenario.type === "defrost") {
+            // 依序除霜，第 2 台除霜未停
+            const step = Math.floor(t / DEFROST_STEP_MIN);
+            for (let f = 0; f < FANS_PER_ROOM; f++) {
+                if (f === 1 && step >= 1) setFan(room, f, "defrost");          // 卡在除霜
+                else if (f === step) setFan(room, f, "defrost");
+                else setFan(room, f, "run");
+            }
+            const stuck = room.fans[1];
+            if (stuck.state === "defrost" && minute - stuck.since === DEFROST_TIMEOUT_MIN && mode === "ac1") {
+                log(`平台規則：${room.id} 第 2 台除霜逾時 ${DEFROST_TIMEOUT_MIN} 分`, "warn");
+            }
+        } else if (t === 0) {
+            setFan(room, scenario.fan, scenario.type);
+        }
+    }
+
+    function stepTemperature() {
+        rooms.forEach(r => {
+            const spec = ROOM_SPEC[r.type];
+            const running = r.fans.filter(f => f.state === "run").length;
+            const heat = r.fans.reduce((s, f) => s + HEAT[f.state], 0);
+            r.temp += (spec.setpoint - r.temp) * COOLING * (running / FANS_PER_ROOM)
+                    + heat + (Math.random() - 0.5) * 0.15;
+        });
+    }
+
+    function checkAlarm() {
+        rooms.forEach((r, i) => {
+            const spec = ROOM_SPEC[r.type];
+            const over = r.temp > spec.max;
+            if (over && !r.alarm) {
+                r.alarm = true;
+                log(`⚠️ ${r.id} 庫溫告警：${r.temp.toFixed(1)}°C（上限 ${spec.max}°C）`, "alarm");
+                if (!alarm && scenario && scenario.room === i) {
+                    alarm = { room: i, at: minute, locatedAt: null };
+                    if (mode === "ac1") locate();
+                    else log(`現況：平台只看得到庫溫，派員進庫逐台排查…`);
+                }
+            } else if (!over && r.alarm && r.temp < spec.max - 0.5) {
+                r.alarm = false;
+                log(`${r.id} 庫溫恢復：${r.temp.toFixed(1)}°C`);
+            }
+        });
+
+        // 現況：人工排查
+        if (alarm && !alarm.locatedAt && mode === "now" && minute - alarm.at >= MANUAL_CHECK_MIN) {
+            locate(true);
+        }
+    }
+
+    function locate(manual) {
+        alarm.locatedAt = minute;
+        const room = rooms[alarm.room];
+        const fanIdx = scenario.type === "defrost" ? 1 : scenario.fan;
+        const fan = room.fans[fanIdx];
+        alarm.fan = fanIdx;
+        alarm.cause = `${room.id} 第 ${fanIdx + 1} 台${scenario.type === "defrost" ? "除霜未停" : STATE_INFO[fan.state].text}`;
+        const how = manual
+            ? `人工進庫排查 ${minute - alarm.at} 分後找到`
+            : `AC1 接入：告警當下定位`;
+        log(`📍 ${how}：${alarm.cause}`, "locate");
+    }
+
+    function tick() {
+        minute++;
+        stepScenario();
+        stepTemperature();
+        checkAlarm();
+        render();
+    }
+
+    // --- 畫面 ---
+    function fmtClock(m) {
+        const total = 120 + m;  // 02:00 起
+        return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    }
+
+    function render() {
+        document.getElementById("clock").innerText = fmtClock(minute);
+        document.getElementById("points").innerText = mode === "ac1" ? `${POINTS} / ${POINTS}` : `0 / ${POINTS}`;
+        document.getElementById("poll").innerText = mode === "ac1" ? "約 3.2 秒" : "—";
+        document.getElementById("plan").setAttribute("class", mode === "ac1" ? "ac1-on" : "ac1-off");
+
+        rooms.forEach((r, i) => {
+            const spec = ROOM_SPEC[r.type];
+            const rect = document.getElementById(`room-${i}`);
+            const level = r.alarm ? "alarm" : r.temp > spec.max - 1 ? "warn" : "";
+            rect.setAttribute("class", `room-rect ${r.type} ${level}`);
+            const tempEl = document.getElementById(`temp-${i}`);
+            tempEl.textContent = `${r.temp.toFixed(1)}°C`;
+            tempEl.setAttribute("class", `room-temp ${r.alarm ? "alarm" : ""}`);
+
+            r.fans.forEach((fan, f) => {
+                const g = document.getElementById(`fan-${i}-${f}`);
+                const known = mode === "ac1" || (alarm && alarm.locatedAt && alarm.room === i && alarm.fan === f);
+                g.querySelector("circle").setAttribute("fill", known ? STATE_INFO[fan.state].color : "var(--unknown)");
+                g.querySelector(".fan-text").textContent = known ? f + 1 : "?";
+                document.getElementById(`fan-label-${i}-${f}`).textContent = known ? STATE_INFO[fan.state].text : "無資料";
+                const located = alarm && alarm.locatedAt && alarm.room === i && alarm.fan === f;
+                g.setAttribute("class", `fan-node ${located ? "located" : ""}`);
+            });
+        });
+
+        renderAlarmCard();
+    }
+
+    function renderAlarmCard() {
+        const card = document.getElementById("alarm-card");
+        const ttl = document.getElementById("ttl");
+
+        if (!alarm) {
+            ttl.innerText = "—";
+            if (scenario) {
+                const room = rooms[scenario.room];
+                card.className = "alarm-card warn";
+                card.innerHTML = mode === "ac1"
+                    ? `<div class="title">🔎 ${room.id} 設備狀態變化中</div><div>庫溫尚未超標，平台已看得到每台冷風機狀態。</div>`
+                    : `<div class="title">⏳ ${room.id} 設備有異狀，但平台看不到</div><div>現況只有庫溫，要等庫溫超標才會告警。</div>`;
+            } else {
+                card.className = "alarm-card";
+                card.innerHTML = `<div class="title">✅ 全區正常</div><div>選擇上方情境，模擬夜班異常。</div>`;
+            }
             return;
         }
-        const items = sortFEFO(state.slots[selectedSlot] || []);
-        if (!items.length) {
-            box.innerText = `${selectedSlot}：目前無庫存`;
-            return;
+
+        const room = rooms[alarm.room];
+        card.className = "alarm-card alarm";
+        if (alarm.locatedAt !== null) {
+            const spent = alarm.locatedAt - alarm.at;
+            ttl.innerText = spent === 0 ? "告警當下" : `${spent} 分`;
+            card.innerHTML = `<div class="title">⚠️ ${room.id} 庫溫告警 ${fmtClock(alarm.at)}</div>
+                              <div class="locate">📍 ${alarm.cause}</div>
+                              <div>${spent === 0 ? "值班人員直接決定進庫處理或叫修，事件已留下設備層紀錄。" : "人工排查完成；事後無設備層紀錄。"}</div>`;
+        } else {
+            const spent = minute - alarm.at;
+            ttl.innerText = `排查中 ${spent} 分`;
+            card.innerHTML = `<div class="title">⚠️ ${room.id} 庫溫告警 ${fmtClock(alarm.at)}</div>
+                              <div>不知道是哪一台冷風機，值班人員穿防寒衣進庫逐台排查…</div>
+                              <div class="progress"><div style="width:${Math.min(100, spent / MANUAL_CHECK_MIN * 100)}%"></div></div>
+                              <div class="note">切換到「AC1 接入」看同一時刻平台能看到什麼</div>`;
         }
-        const rows = items.map(i => {
-            const d = daysUntil(i.exp);
-            const note = d < 0 ? " ❌已過期" : d <= EXPIRY_WARN_DAYS ? ` ⚠️剩 ${d} 天` : "";
-            return `<tr><td>${escapeHtml(i.name)}</td><td>${escapeHtml(i.lot)}</td>
-                    <td>${i.qty}</td><td>${i.exp || "-"}${note}</td></tr>`;
-        }).join("");
-        box.innerHTML = `
-            <strong>${selectedSlot}</strong>
-            <table>
-                <tr><th>品名</th><th>批號</th><th>箱數</th><th>有效期限</th></tr>
-                ${rows}
-            </table>
-        `;
-    }
-
-    // 先到期先出 (FEFO)
-    function sortFEFO(items) {
-        return [...items].sort((a, b) => (a.exp || "9999") .localeCompare(b.exp || "9999"));
-    }
-
-    // --- 入出庫 ---
-    function setMode(newMode) {
-        mode = newMode;
-        document.getElementById("tab-in").className = mode === "in" ? "active" : "secondary";
-        document.getElementById("tab-out").className = mode === "out" ? "active" : "secondary";
-        document.getElementById("submit-btn").innerText = mode === "in" ? "確認入庫" : "確認出庫";
-        document.getElementById("exp-label").style.visibility = mode === "in" ? "visible" : "hidden";
-        showMsg("");
-    }
-
-    function handleSubmit(e) {
-        e.preventDefault();
-        const name = document.getElementById("f-name").value.trim();
-        const lot = document.getElementById("f-lot").value.trim();
-        const qty = parseInt(document.getElementById("f-qty").value, 10);
-        const code = document.getElementById("f-slot").value;
-        const exp = document.getElementById("f-exp").value;
-
-        if (!name || !lot || !(qty > 0)) {
-            showMsg("請完整填寫品名、批號與數量", true);
-            return;
-        }
-
-        const ok = mode === "in"
-            ? stockIn(code, name, lot, qty, exp)
-            : stockOut(code, name, lot, qty);
-        if (!ok) return;
-
-        saveState();
-        selectedSlot = code;
-        renderSlots();
-        renderSlotDetail();
-        document.getElementById("stock-form").reset();
-        document.getElementById("f-slot").value = code;
-    }
-
-    function stockIn(code, name, lot, qty, exp) {
-        if (lastStatus === "alarm") {
-            showMsg("庫區溫度異常，暫停入庫作業", true);
-            return false;
-        }
-        if (!exp) {
-            showMsg("入庫需填寫有效期限", true);
-            return false;
-        }
-        if (daysUntil(exp) < 0) {
-            showMsg("此批貨品已過期，不可入庫", true);
-            return false;
-        }
-        if (slotQty(code) + qty > SLOT_CAPACITY) {
-            showMsg(`${code} 剩餘容量 ${SLOT_CAPACITY - slotQty(code)} 箱，不足 ${qty} 箱`, true);
-            return false;
-        }
-
-        const items = state.slots[code] = state.slots[code] || [];
-        const same = items.find(i => i.name === name && i.lot === lot);
-        if (same) same.qty += qty;
-        else items.push({ name, lot, qty, exp, inAt: new Date().toISOString() });
-
-        log(`📥 入庫 ${name}（批號 ${lot}）${qty} 箱 → ${code}`);
-        showMsg("入庫完成", false);
-        return true;
-    }
-
-    function stockOut(code, name, lot, qty) {
-        const items = state.slots[code] || [];
-        const item = items.find(i => i.name === name && i.lot === lot);
-        if (!item) {
-            showMsg(`${code} 找不到 ${name}（批號 ${lot}）`, true);
-            return false;
-        }
-        if (item.qty < qty) {
-            showMsg(`庫存不足，${code} 僅有 ${item.qty} 箱`, true);
-            return false;
-        }
-
-        // FEFO 提示：同品名有更早到期的批號
-        const earlier = items.find(i => i.name === name && i !== item && i.exp && i.exp < item.exp);
-        if (earlier && !confirm(`依先到期先出原則，建議先出批號 ${earlier.lot}（${earlier.exp} 到期）。\n仍要出庫批號 ${lot} 嗎？`)) {
-            return false;
-        }
-
-        item.qty -= qty;
-        if (item.qty === 0) items.splice(items.indexOf(item), 1);
-
-        log(`📤 出庫 ${name}（批號 ${lot}）${qty} 箱 ← ${code}`);
-        showMsg("出庫完成", false);
-        return true;
-    }
-
-    // --- UI 輔助 ---
-    function showMsg(text, isError) {
-        const el = document.getElementById("form-msg");
-        el.innerText = text;
-        el.className = isError ? "msg-error" : "msg-ok";
     }
 
     function log(msg, level) {
-        const time = new Date().toLocaleTimeString("zh-TW", { hour12: false });
-        state.logs.unshift({ time, msg, level: level || "" });
-        state.logs = state.logs.slice(0, 200);
-        saveState();
-        renderLog();
-    }
-
-    function renderLog() {
         const box = document.getElementById("log");
-        box.innerHTML = "";
-        state.logs.forEach(l => {
-            const entry = document.createElement("div");
-            entry.className = `log-entry ${l.level}`;
-            entry.innerText = `[${l.time}] ${l.msg}`;
-            box.appendChild(entry);
-        });
+        const entry = document.createElement("div");
+        entry.className = `log-entry ${level || ""}`;
+        entry.innerHTML = `<span class="t">${fmtClock(minute)}</span>`;
+        entry.appendChild(document.createTextNode(msg));
+        box.prepend(entry);
     }
 
-    function escapeHtml(s) {
-        const div = document.createElement("div");
-        div.innerText = s;
-        return div.innerHTML;
+    // --- 操作 ---
+    function startScenario(type) {
+        reset(false);
+        const defs = {
+            defrost: { room: 2, fan: 1, text: "C3 除霜程序開始（4 台依序除霜）" },
+            fault: { room: 5, fan: 3, text: "C6 第 4 台冷風機發生故障" },
+            stop: { room: 6, fan: 0, text: "C7 第 1 台冷風機運轉訊號消失" }
+        };
+        const d = defs[type];
+        scenario = { type, room: d.room, fan: d.fan, start: minute };
+        log(`▶ 情境開始：${mode === "ac1" || type === "defrost" ? d.text : `${rooms[d.room].id} 設備異常（平台看不到）`}`);
+        stepScenario();
+        render();
+        startTimer();
     }
 
-    // --- 初始化 ---
-    function init() {
-        const slotSelect = document.getElementById("f-slot");
-        slotCodes.forEach(code => slotSelect.add(new Option(code, code)));
-
-        const minInput = document.getElementById("temp-min");
-        const maxInput = document.getElementById("temp-max");
-        minInput.value = state.tempMin;
-        maxInput.value = state.tempMax;
-        const onRangeChange = () => {
-            const min = parseFloat(minInput.value);
-            const max = parseFloat(maxInput.value);
-            if (isNaN(min) || isNaN(max) || min >= max) return;
-            state.tempMin = min;
-            state.tempMax = max;
-            saveState();
-            log(`溫度範圍設定為 ${min}°C ~ ${max}°C`);
-            drawChart();
-        };
-        minInput.onchange = onRangeChange;
-        maxInput.onchange = onRangeChange;
-
-        document.getElementById("door-btn").onclick = () => {
-            doorOpenTicks = 6;
-            log("🚪 AC1 庫門開啟（模擬）", "warn");
-        };
-        document.getElementById("tab-in").onclick = () => setMode("in");
-        document.getElementById("tab-out").onclick = () => setMode("out");
-        document.getElementById("stock-form").onsubmit = handleSubmit;
-        document.getElementById("reset-btn").onclick = () => {
-            if (!confirm("確定要清除 AC1 所有庫存與紀錄嗎？")) return;
-            state = JSON.parse(JSON.stringify(defaultState));
-            saveState();
-            minInput.value = state.tempMin;
-            maxInput.value = state.tempMax;
-            selectedSlot = null;
-            renderSlots();
-            renderSlotDetail();
-            renderLog();
-        };
-        window.addEventListener("resize", drawChart);
-
-        renderSlots();
-        renderLog();
-        if (!state.logs.length) log(`冷鏈庫 ${ZONE} 系統啟動`);
-
-        tickTemperature();
-        setInterval(tickTemperature, 2000);
+    function setMode(m) {
+        mode = m;
+        document.getElementById("mode-now").classList.toggle("active", m === "now");
+        document.getElementById("mode-ac1").classList.toggle("active", m === "ac1");
+        log(m === "ac1" ? "切換：AC1 接入（96 點狀態接回平台）" : "切換：現況（平台只有庫溫）");
+        if (m === "ac1" && alarm && alarm.locatedAt === null) locate(false);
+        render();
     }
 
-    init();
+    function startTimer() {
+        clearInterval(timer);
+        timer = setInterval(tick, 1000 / speed);
+    }
+
+    function reset(withLog = true) {
+        clearInterval(timer);
+        initState();
+        document.getElementById("log").innerHTML = "";
+        if (withLog) log("系統復歸，全區正常運轉");
+        render();
+        startTimer();
+    }
+
+    document.getElementById("mode-now").onclick = () => setMode("now");
+    document.getElementById("mode-ac1").onclick = () => setMode("ac1");
+    document.getElementById("reset-btn").onclick = () => reset();
+    document.getElementById("speed-btn").onclick = e => {
+        speed = speed === 1 ? 3 : speed === 3 ? 10 : 1;
+        e.target.innerText = `速度 ×${speed}`;
+        startTimer();
+    };
+    document.querySelectorAll("[data-scenario]").forEach(btn => {
+        btn.onclick = () => startScenario(btn.dataset.scenario);
+    });
+
+    initState();
+    buildPlan();
+    render();
+    log("夜班 02:00，8 間冷庫、32 台冷風機正常運轉");
+    startTimer();
 </script>
 </body>
 </html>
