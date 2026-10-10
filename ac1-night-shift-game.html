@@ -90,8 +90,8 @@
 
     /* 開場與結算 */
     .overlay {
-        position: absolute; inset: 0; background: rgba(6, 11, 16, 0.9);
-        display: flex; align-items: center; justify-content: center; padding: 16px; overflow-y: auto;
+        position: absolute; inset: 0; background: rgba(6, 11, 16, 0.92);
+        display: flex; align-items: safe center; justify-content: center; padding: 16px; overflow-y: auto;
     }
     .prompt {
         position: absolute; transform: translate(-50%, -100%);
@@ -113,6 +113,20 @@
     .fine { font-size: 0.75rem; color: var(--muted); margin-top: 10px; }
 
     footer { color: var(--muted); font-size: 0.78rem; margin-top: 14px; }
+
+    /* 情境選單 */
+    .scenarios { display: grid; gap: 8px; margin-top: 8px; }
+    .scenario {
+        display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; align-items: center;
+        text-align: left; padding: 10px 12px; width: 100%;
+    }
+    .scenario .sc-time { font: 700 0.95rem var(--font-num); color: var(--accent); }
+    .scenario .sc-main { display: grid; gap: 2px; min-width: 0; }
+    .scenario .sc-main b { font-size: 1rem; }
+    .scenario .sc-main small { color: var(--accent); font-size: 0.75rem; }
+    .scenario .sc-main span { color: var(--muted); font-size: 0.82rem; }
+    .scenario .sc-done { color: var(--run); font-size: 0.78rem; white-space: nowrap; }
+    @media (max-width: 480px) { .scenario { grid-template-columns: 44px minmax(0, 1fr); } .scenario .sc-done { grid-column: 2; } }
 </style>
 </head>
 <body>
@@ -127,7 +141,7 @@
 
     <div class="hud">
         <div class="cell"><div class="k">時間</div><div class="v" id="hud-time">02:13</div></div>
-        <div class="cell"><div class="k">C3 庫溫</div><div class="v" id="hud-temp">-17.6°C</div></div>
+        <div class="cell"><div class="k" id="hud-temp-k">C3 庫溫</div><div class="v" id="hud-temp">-17.6°C</div></div>
         <div class="cell goal-cell"><div class="k">目標</div><div class="goal" id="hud-goal">接電話</div></div>
     </div>
 
@@ -194,10 +208,14 @@ const OBJS = [
     { id: "panel", x: 19, y: 13, kind: "panel", name: "配電盤" },
     { id: "chen", x: 22, y: 16, kind: "npc", name: "老陳", role: "冷凍空調工程商", color: "#e9a23b" },
     { id: "mei", x: 28, y: 16, kind: "npc", name: "小美", role: "品保", color: "#d77fb3" },
-    { id: "lin", x: 36, y: 15, kind: "npc", name: "林主任", role: "營運主管", color: "#9fb86a" }
+    { id: "lin", x: 36, y: 15, kind: "npc", name: "林主任", role: "營運主管", color: "#9fb86a" },
+    { id: "de", x: 31, y: 10, kind: "npc", name: "阿德", role: "倉管／堆高機", color: "#7fc6b8" },
+    { id: "doorbox", x: 19, y: 9, kind: "doorbox", name: "C3 庫門" },
+    { id: "unitbox", x: 36, y: 9, kind: "unitbox", name: "機組控制箱" },
+    { id: "pallet7", x: 18, y: 5, kind: "pallet", onlyIn: "hotspot" }
 ];
 const objById = Object.fromEntries(OBJS.map(o => [o.id, o]));
-const objAt = (tx, ty) => OBJS.find(o => o.x === tx && o.y === ty);
+const objAt = (tx, ty) => OBJS.find(o => o.x === tx && o.y === ty && objActive(o));
 
 // ===== 術語 =====
 const GLOSSARY = {
@@ -210,12 +228,168 @@ const GLOSSARY = {
     "Gateway": "把各台設備的資料彙整起來，再送到上層監控平台的轉接設備。",
     "Modbus RTU": "冷庫控制器常用的通訊協定。AC1 負責傳輸，資料格式沿用原本的協定。",
     "備品": "壞了可以馬上換上的零件。工程商很在意新規格的備品在台灣買不買得到。",
-    "設備層紀錄": "每台設備什麼時候運轉、停、除霜、故障的紀錄。有了它，事後可以追溯是哪一台、從幾點開始。"
+    "設備層紀錄": "每台設備什麼時候運轉、停、除霜、故障的紀錄。有了它，事後可以追溯是哪一台、從幾點開始。",
+    "門位": "庫門是開還是關的感測訊號。門開著太久，熱氣會灌進庫裡、門邊結霜。",
+    "堆貨擋風": "貨堆得太靠近冷風機出風口，冷風吹不出去，庫裡局部變熱。設備本身沒有壞。",
+    "冷凝機組": "在機房或屋外，負責把冷庫裡的熱排出去的壓縮機和冷凝風扇。好幾間庫可能共用一組。",
+    "微電表": "裝在設備電源上的小電表，可以看出電流、用電是否異常。",
+    "復電": "停電或閃斷之後電力恢復。有些設備復電後要重新啟動，不一定會自己回來。"
 };
 
+// ===== 情境 =====
+// 每個異常情境玩兩晚：第一晚現況（平台只有庫溫），第二晚 AC1 接入（設備狀態接回平台）
+const FAN_IDS = ["fan1", "fan2", "fan3", "fan4"];
+const FANS_AND = extra => FAN_IDS.concat(extra);
+const ROOM_BASE = [-22, -22, -22, -22, -22, 1.5, 1.5, 1.5];
+
+const SCENARIOS = [
+    {
+        id: "defrost", title: "除霜沒停", tag: "夜班異常查找", time: 2 * 60 + 13,
+        summary: "C3 庫溫告警，4 台冷風機裡有一台除霜一直沒結束。",
+        rooms: [2], tempLabel: "C3 庫溫", startTemp: -17.6, rise: 0.22, recover: 0.35, setpoint: -22,
+        cause: "fan2", causeText: "C3 第 2 台除霜沒停", fixer: "chen", fixMin: 8,
+        candidates: FAN_IDS,
+        fanState: (id, fixed) => id === "fan2" && !fixed ? "defrost" : "run",
+        alert: () => "C3-2 除霜逾時：已除霜 23 分鐘未結束",
+        handoff: "【交接】02:00 C3 排程[[除霜]]，4 台依序，每台約 10 分鐘。照理 02:40 前全部結束。",
+        phone1: ["C3 [[庫溫告警]]，-17.6°C，還在往上爬。", "我這邊只看得到庫溫，看不到是哪一台[[冷風機]]出問題。你過來看一下？"],
+        zhe1: ["你看，螢幕上只有 8 間庫的庫溫。C3 一直往上爬。", "C3 有 4 台[[冷風機]]，可是平台看不到它們在運轉、故障還是[[除霜]]。"],
+        found: "風扇沒在轉，盤管摸起來是溫的。[[除霜]]加熱器還開著——除霜沒停！",
+        phone2: ["C3 [[庫溫告警]]，-17.6°C。", "不過平台顯示：C3 第 1、3、4 台運轉，第 2 台[[除霜]]已經 23 分鐘還沒結束，除霜逾時。"],
+        zhe2: ["螢幕上 32 台冷風機都有燈號。C3-2 是藍燈，除霜 24 分鐘還沒結束。", "這些狀態是沿著[[配電分支]]的 [[D 線]]接回 [[Gateway]] 的。"],
+        fix1: ["C3 第 2 台除霜沒停？八成是除霜終止感溫棒或控制器卡住，我去處理，大概 8 分鐘。", "下次早點知道是哪一台，我可以直接帶料過去，你也不用在裡面凍那麼久。"],
+        fix2: ["C3 第 2 台除霜逾時，好，我直接帶除霜控制器的料過去。"],
+        ac1Question: true
+    },
+    {
+        id: "door", title: "庫門沒關好", tag: "開門入熱", time: 3 * 60 + 42,
+        summary: "堆高機出庫後，C3 的快速門沒有完全關上，熱氣一直灌進去。",
+        rooms: [2], tempLabel: "C3 庫溫", startTemp: -17.7, rise: 0.3, recover: 0.5, setpoint: -22,
+        cause: "doorbox", causeText: "C3 庫門沒關好", fixer: "de", fixMin: 3,
+        candidates: FANS_AND(["doorbox"]),
+        fanState: () => "run",
+        alert: () => "C3 庫門開啟中：已 17 分鐘（門位）",
+        handoff: "【交接】03:20 阿德用堆高機從 C3 出一批冷凍水餃到月台。C5 門封條有點鬆，白班會換。",
+        phone1: ["C3 [[庫溫告警]]，-17.7°C，上升得很快。", "平台只有庫溫，我不知道是冷風機還是別的問題。你過來看看？"],
+        zhe1: ["C3 升得特別快，一分鐘快 0.3 度。", "平台上只有庫溫，冷風機和庫門的狀態都看不到。"],
+        found: "門沒有完全關上，留了一條縫，門邊已經開始結霜。熱氣一直從這裡灌進去！",
+        phone2: ["C3 [[庫溫告警]]，-17.7°C。", "平台顯示 4 台冷風機都在運轉，但 C3 [[門位]]感測顯示庫門已經開了 17 分鐘。"],
+        zhe2: ["冷風機都是綠燈，C3 的[[門位]]是紅燈，開了 17 分鐘。", "應該是剛才出貨後門沒關好，不是冷風機的問題。"],
+        fix1: ["我出完貨以為門有關上……快速門的感應可能沒觸發，我馬上去關。", "門封條我明天也請老陳看一下。"],
+        fix2: ["門開著 17 分鐘？我剛出完貨，感應沒觸發。馬上去關！"]
+    },
+    {
+        id: "hotspot", title: "堆貨擋住風路", tag: "偏溫熱點", time: 1 * 60 + 35,
+        summary: "C3 一角溫度偏高，可是 4 台冷風機都在運轉。",
+        rooms: [2], tempLabel: "C3 庫溫", startTemp: -17.8, rise: 0.12, recover: 0.3, setpoint: -22,
+        cause: "fan3", causeText: "貨堆擋住 C3 第 3 台的出風口", fixer: "de", fixMin: 6,
+        candidates: FAN_IDS,
+        fanState: () => "run",
+        alert: () => "C3-3 旁溫度點偏高 -15.9°C；4 台冷風機運轉正常",
+        handoff: "【交接】晚班進了一批年節禮盒，C3 東側暫時加堆兩板，白班再上架。",
+        phone1: ["C3 [[庫溫告警]]，-17.8°C，慢慢往上。", "我只看得到一個庫溫，不知道問題在哪。你看一下？"],
+        zhe1: ["C3 升得不快，但一直沒回來。", "平台看不到冷風機狀態，也看不到是庫裡哪一角變熱。"],
+        found: "風扇有在轉，可是出風口前面的貨堆得緊貼著，冷風吹不出去，這一角特別熱。",
+        foundNote: "不是設備壞了，是[[堆貨擋風]]。",
+        phone2: ["C3 [[庫溫告警]]，-17.8°C。", "平台顯示 4 台冷風機都在運轉，沒有故障、沒有除霜，但 C3-3 旁邊的溫度點特別高。"],
+        zhe2: ["4 台都是綠燈，設備看起來沒問題。只有 C3-3 那一角的溫度點偏高。", "這種情況比較像[[堆貨擋風]]，不是冷風機壞了。"],
+        wrongFixer: { chen: "4 台冷風機都在運轉、沒有故障，叫我去也修不了什麼。先看看是不是貨堆到風口了。" },
+        fix1: ["禮盒那兩板是我晚班堆的，堆太靠風口了。我用堆高機挪開。"],
+        fix2: ["C3-3 旁邊？那是我晚班加堆的兩板禮盒，我馬上挪開。"]
+    },
+    {
+        id: "unit", title: "冷凝機組跳脫", tag: "設備與能源效率", time: 2 * 60 + 50,
+        summary: "C3、C4 一起升溫，冷風機都在轉，問題在機組。",
+        rooms: [2, 3], tempLabel: "C3／C4 庫溫", startTemp: -17.6, rise: 0.2, recover: 0.3, setpoint: -22,
+        cause: "unitbox", causeText: "冷凍機組第 2 組冷凝風扇過載跳脫", fixer: "chen", fixMin: 10,
+        candidates: FANS_AND(["unitbox"]),
+        fanState: () => "run",
+        alert: () => "冷凍機組 2 號冷凝風扇跳脫；壓縮機電流偏高（[[微電表]]）",
+        handoff: "【交接】今天白天外氣 34°C，[[冷凝機組]]高壓偏高，老陳說明天來清散熱片。",
+        phone1: ["C3 和 C4 兩間一起[[庫溫告警]]！C3 -17.6°C。", "兩間同時升溫，我看不出是哪裡的問題。"],
+        zhe1: ["C3、C4 兩間一起往上爬，速度差不多。", "平台只有庫溫，冷風機和[[冷凝機組]]的狀態都看不到。"],
+        found: "2 號冷凝風扇停了，過載保護跳脫，高壓偏高。C3、C4 都吃這組機組的冷！",
+        phone2: ["C3、C4 [[庫溫告警]]。", "平台顯示兩間的 8 台冷風機都在運轉，但[[冷凝機組]] 2 號冷凝風扇跳脫，[[微電表]]顯示壓縮機電流偏高。"],
+        zhe2: ["冷風機全是綠燈，紅燈在機組那邊：2 號冷凝風扇過載跳脫。", "兩間一起熱，問題不在庫裡，在機組。"],
+        fix1: ["2 號冷凝風扇跳脫？外氣熱、散熱片又髒，過載了。我先復歸、檢查馬達，大概 10 分鐘。"],
+        fix2: ["2 號冷凝風扇跳脫，我直接帶工具去機組，不用進庫。"]
+    },
+    {
+        id: "power", title: "停電復電之後", tag: "電源切換", time: 3 * 60 + 21,
+        summary: "03:05 市電閃斷，復電後有一台冷風機沒有跟著重新啟動。",
+        rooms: [2], tempLabel: "C3 庫溫", startTemp: -17.6, rise: 0.2, recover: 0.35, setpoint: -22,
+        cause: "fan2", causeText: "C3 第 2 台復電後沒有重新啟動", fixer: "chen", fixMin: 4,
+        candidates: FAN_IDS,
+        fanState: (id, fixed) => id === "fan2" && !fixed ? "stop" : "run",
+        alert: () => "復電後 31 台回報運轉；C3-2 無運轉訊號",
+        handoff: "【交接】03:05 市電閃斷約 2 秒，發電機沒有啟動，各庫看起來都恢復了。",
+        phone1: ["C3 [[庫溫告警]]，-17.6°C。剛剛閃斷電之後，看起來都恢復了啊？", "平台只有庫溫，我不知道哪一台沒恢復。"],
+        zhe1: ["閃斷之後 8 間庫溫都正常，過了十幾分鐘 C3 才開始往上爬。", "平台看不到每台冷風機有沒有重新啟動。"],
+        found: "風扇完全沒轉，控制器面板停在待機，[[復電]]後沒有重新啟動！",
+        phone2: ["C3 [[庫溫告警]]，-17.6°C。", "平台顯示[[復電]]後 31 台冷風機都回報運轉，只有 C3-2 一直沒有運轉訊號。"],
+        zhe2: ["03:05 閃斷後，32 台裡 31 台在 2 秒內回報運轉，C3-2 一直是灰燈。", "節點、設定和告警由上層平台保存，復電後馬上就看得出誰沒回來。"],
+        fix1: ["C3 第 2 台復電沒起來？控制器卡在待機，我去重新啟動，4 分鐘。", "要是復電當下就知道是哪一台，連告警都不會響。"],
+        fix2: ["C3-2 沒運轉訊號？我去把控制器重新啟動。"]
+    },
+    {
+        id: "quiz", title: "擴建要用哪一種", tag: "擴建與方案選擇", time: 14 * 60 + 30, type: "quiz", tempLabel: "庫溫",
+        summary: "林主任要擴建新庫，老陳問：為什麼不用 RS-485、PoE 或 Wi-Fi？選對每種現場的接法。"
+    }
+];
+
+const QUIZ = [
+    {
+        q: "下個月擴建 C9～C12。新庫的冷風機沿 4 個[[配電分支]]散開，設備區沒有網路，庫板是金屬夾芯。設備狀態要怎麼接回來？",
+        options: [
+            ["AC1：沿配電分支布 D 線", true, "對。分支多、沒有網路、庫板遮蔽同時成立，是 AC1 最有利的現場。"],
+            ["Wi-Fi 無線 I/O", false, "金屬夾芯庫板會遮蔽訊號，告警當下可能剛好斷線。"],
+            ["RS-485 串接", false, "RS-485 要手拉手串接、不能分支，跨 4 個分支要另外拉通訊路徑，還要和電力線保持距離。"]
+        ]
+    },
+    {
+        q: "辦公區旁邊的展示冷櫃只要溫度紀錄，旁邊剛好有一台 PoE 交換器。",
+        options: [
+            ["PoE 溫度探頭", true, "對。只要溫度、旁邊又有 PoE，PoE 最省事。這種現場 AC1 不利。"],
+            ["AC1", false, "這裡 AC1 不利：只需溫度紀錄、附近已有 PoE，沒必要多布 D 線。"],
+            ["RS-485 加閘道", false, "多一台閘道和一條線，沒有比 PoE 省。"]
+        ]
+    },
+    {
+        q: "機房裡 3 台變頻器就在同一個配電盤旁邊，RS-485 拉 5 公尺就到。",
+        options: [
+            ["RS-485", true, "對。線短、好施工，工程商也熟，和 AC1 差異不大。"],
+            ["AC1", false, "AC1 也做得到，但這種短距離集中的設備，差異不大，用工程商熟悉的 RS-485 就好。"],
+            ["Wi-Fi", false, "設備就在旁邊，有線又短又穩，沒有必要用無線。"]
+        ]
+    },
+    {
+        q: "隔壁老倉庫的業主說：完全不能新增任何線材。",
+        options: [
+            ["Wi-Fi 或寬頻 PLC", true, "對。完全不能新增線材時，只剩不用新線的方案。AC1 也要增設 D 線，這裡不利。"],
+            ["AC1", false, "AC1 仍要沿配電路徑增設一條 D 線，業主不能接受新增線材時就不適合。"],
+            ["RS-485", false, "RS-485 一樣要新拉通訊線。"]
+        ]
+    },
+    {
+        q: "南部新園區有兩棟，冷風機分屬兩套變電系統。",
+        options: [
+            ["各棟分段接入，再由上層平台整合", true, "對。AC1 適用同一供電區域，跨變電系統要分段，優勢會縮小。"],
+            ["AC1 一條 D 線跨兩棟", false, "AC1 跨供電分區須另行檢核參考電位、隔離與橋接，不能直接一條拉到底。"],
+            ["全部改 Wi-Fi", false, "不一定要全換無線，分段接入後由上層整合即可。"]
+        ]
+    },
+    {
+        q: "某物流中心原本用電力線載波（PLC），除霜加熱器、壓縮機一啟停就斷訊，工程商一直回去調校。",
+        options: [
+            ["值得驗證 AC1 這類有線分離資料的做法", true, "對。D 線不和壓縮機、除霜負載共用媒介，但冷庫實測還沒做，要先驗證，不能先說滿。"],
+            ["繼續調 PLC 就好", false, "客戶已經有反覆查修的痛，這正是值得比較其他方案的時機。"],
+            ["保證換 AC1 一定不會斷", false, "AC1 在冷庫的對照實測還沒完成，現階段不能這樣保證。"]
+        ]
+    }
+];
+
 // ===== 狀態 =====
-const START_CLOCK = 2 * 60 + 13;  // 02:13 告警
-const FIX_MIN = 8;                // 修好所需時間
+let S = SCENARIOS[0];
 let night, step, clock, coat, checked, metrics, results = {};
 let dialogQueue = [], dialogOpen = false, overlayOpen = true;
 let usingKeyboard = false;
@@ -234,45 +408,58 @@ const keys = {};
 function resetNight(n) {
     night = n;
     step = "phone";
-    clock = START_CLOCK;
+    clock = S.time;
     coat = false;
     checked = {};
-    metrics = { knowAt: null, dispatchAt: null, entries: 0, exposure: 0, checks: 0, records: n === 2, endAt: null };
+    metrics = { knowAt: null, dispatchAt: null, entries: 0, exposure: 0, checks: 0, wrong: 0, score: 0, endAt: null };
     player.x = 14 * T + T / 2; player.y = 18 * T + T / 2; player.path = [];
     const tag = document.getElementById("night-tag");
-    tag.textContent = n === 1 ? "第一晚｜現況" : "第二晚｜AC1 接入";
+    tag.textContent = S.type === "quiz" ? `${S.title}｜決策` : `${S.title}｜${n === 1 ? "第一晚・現況" : "第二晚・AC1"}`;
     tag.className = `night-tag ${n === 2 ? "ac1" : ""}`;
+    document.getElementById("hud-temp-k").textContent = S.tempLabel || "C3 庫溫";
     updateHud();
 }
 
-// C3 庫溫模型（示意）：告警時 -17.6°C，每分鐘升 0.22°C；修好後每分鐘降 0.35°C，回到 -22°C
-function c3Temp(t) {
-    const fixAt = metrics.dispatchAt !== null ? metrics.dispatchAt + FIX_MIN : Infinity;
-    if (t <= fixAt) return -17.6 + 0.22 * (t - START_CLOCK);
-    const peak = -17.6 + 0.22 * (fixAt - START_CLOCK);
-    return Math.max(-22, peak - 0.35 * (t - fixAt));
+const isFixed = () => metrics.dispatchAt !== null && clock >= metrics.dispatchAt + (S.fixMin || 0);
+const fanState = id => S.fanState ? S.fanState(id, isFixed()) : "run";
+const objActive = o => !o.onlyIn || (o.onlyIn === S.id && !isFixed());
+
+// 受影響庫房的庫溫（示意）：告警後以固定速率上升，修好後回落
+function roomTemp(t) {
+    if (!S.rooms) return -22;
+    const fixAt = metrics.dispatchAt !== null ? metrics.dispatchAt + S.fixMin : Infinity;
+    if (t <= fixAt) return S.startTemp + S.rise * (t - S.time);
+    const peak = S.startTemp + S.rise * (fixAt - S.time);
+    return Math.max(S.setpoint, peak - S.recover * (t - fixAt));
 }
 function overTempMinutes() {
-    const fixAt = metrics.dispatchAt + FIX_MIN;
-    const peak = c3Temp(fixAt);
-    return (fixAt - START_CLOCK) + Math.max(0, (peak + 18) / 0.35);
+    const fixAt = metrics.dispatchAt + S.fixMin;
+    const peak = roomTemp(fixAt);
+    return (fixAt - S.time) + Math.max(0, (peak + 18) / S.recover);
 }
 
 // ===== 任務 =====
-const GOALS = {
-    1: {
-        phone: "接電話", handoff: "到工程辦公區看交接本", zhe: "到中控室找阿哲",
-        locker: "到 C3 門口旁的防寒衣櫃換裝", search: "進 C3，逐台檢查冷風機",
-        chen: "到機房告訴老陳是哪一台", mei: "到品保找小美補紀錄", lin: "向林主任報告", done: "第一晚結束"
-    },
-    2: {
-        phone: "接電話", zhe: "到中控室看平台", chen: "到機房請老陳修 C3 第 2 台",
-        mei: "到品保找小美", lin: "向林主任報告", done: "第二晚結束"
-    }
-};
+const NPC_PLACE = { chen: "機房的老陳", de: "月台的阿德", mei: "品保的小美", lin: "主任室的林主任" };
+function goalText() {
+    if (S.type === "quiz") return step === "lin" ? "到主任室找林主任開會" : "";
+    const hint = S.candidates.includes("unitbox") ? "C3 冷風機、機組控制箱" : S.candidates.includes("doorbox") ? "C3 冷風機、庫門" : "C3 的 4 台冷風機";
+    return {
+        phone: "接電話",
+        zhe: night === 1 ? "到中控室找阿哲" : "到中控室看平台",
+        search: coat ? `找出原因：檢查${hint}` : `找出原因：檢查${hint}（進庫要先穿防寒衣）`,
+        fix: `找${NPC_PLACE[S.fixer]}處理`,
+        mei: "到品保找小美補紀錄",
+        lin: "向林主任報告",
+        done: "結束"
+    }[step] || "";
+}
 function targets() {
-    if (step === "search") return ["fan1", "fan2", "fan3", "fan4"].filter(id => !checked[id]);
-    const map = { handoff: ["handoff"], zhe: ["zhe"], locker: ["locker"], chen: ["chen"], mei: ["mei"], lin: ["lin"] };
+    if (step === "search") {
+        const left = S.candidates.filter(id => !checked[id]);
+        const needCoat = !coat && left.some(id => objById[id].kind === "fan");
+        return needCoat ? left.filter(id => objById[id].kind !== "fan").concat("locker") : left;
+    }
+    const map = { zhe: ["zhe"], fix: [S.fixer], mei: ["mei"], lin: ["lin"] };
     return map[step] || [];
 }
 
@@ -283,186 +470,200 @@ function fmt(t) {
 
 function updateHud() {
     document.getElementById("hud-time").textContent = fmt(clock);
-    const temp = c3Temp(clock);
     const el = document.getElementById("hud-temp");
-    el.textContent = `${temp.toFixed(1)}°C`;
-    el.classList.toggle("bad", temp > -18);
-    document.getElementById("hud-goal").textContent = GOALS[night][step] || "";
+    if (S.type === "quiz") {
+        el.textContent = "—";
+        el.classList.remove("bad");
+    } else {
+        const temp = roomTemp(clock);
+        el.textContent = `${temp.toFixed(1)}°C`;
+        el.classList.toggle("bad", temp > -18);
+    }
+    document.getElementById("hud-goal").textContent = goalText();
 }
 
 // ===== 互動 =====
+const NORMAL_TEXT = {
+    fan: o => `${o.name}：風扇在轉，出風很冷，運轉正常。`,
+    doorbox: () => "C3 庫門：門關得好好的，門封條也正常。",
+    unitbox: () => "冷凍機組控制箱：兩組壓縮機和冷凝風扇都在運轉，電流正常。"
+};
+const CHECK_MIN = { fan: 6, doorbox: 2, unitbox: 4 };
+
 function interact(id) {
     const o = objById[id];
     if (!o || o.kind === "pallet") return;
+    if (S.type === "quiz") return interactQuiz(id);
     const N = night;
 
     if (id === "zhe" || id === "screen") {
-        if (N === 1 && step === "zhe") {
-            clock += 1;
-            say([
-                ["zhe", `你看，螢幕上只有 8 間庫的庫溫。C3 現在 ${c3Temp(clock).toFixed(1)}°C，[[庫溫告警]]一直響。`],
-                ["zhe", "C3 有 4 台[[冷風機]]，可是平台看不到它們在運轉、故障還是[[除霜]]。"],
-                ["zhe", "要怎麼辦？", [
-                    ["我穿防寒衣進庫，一台一台看", () => setStep("locker")],
-                    ["先叫老陳來修", () => say([
-                        ["zhe", "老陳一定先問「哪一台？」我們現在答不出來，他也只能進去一台一台找。"],
-                        ["zhe", "還是你先進去看吧。", [["好，我去換防寒衣", () => setStep("locker")]]]
-                    ])]
-                ]]
-            ]);
-        } else if (N === 2 && step === "zhe") {
-            clock += 1;
-            metrics.knowAt = metrics.knowAt ?? START_CLOCK;
-            say([
-                ["zhe", "螢幕上 32 台冷風機都有燈號。C3 第 1、3、4 台綠燈運轉，第 2 台藍燈，除霜已經 24 分鐘還沒結束。"],
-                ["zhe", "平台跳的是「C3-2 除霜逾時」。這些狀態是沿著[[配電分支]]的 [[D 線]]接回 [[Gateway]] 的。"],
-                ["zhe", "要怎麼處理？", [
-                    ["直接請老陳修 C3 第 2 台", () => setStep("chen")],
-                    ["我還是進庫看看", () => say([
-                        ["zhe", "不用穿防寒衣進去找了，平台已經告訴你是哪一台。把時間留給修理吧。", [["好，去找老陳", () => setStep("chen")]]]
-                    ])]
-                ]]
-            ]);
-        } else {
-            say([["zhe", N === 2 ? "平台上每台冷風機的狀態都看得到，有事我再叫你。" : "目前只看得到庫溫。有新狀況我打給你。"]]);
+        if (step !== "zhe") {
+            return say([["zhe", N === 2 ? "平台上每台設備的狀態都看得到，有事我再叫你。" : "目前只看得到庫溫。有新狀況我打給你。"]]);
         }
-        return;
+        clock += 1;
+        if (N === 1) {
+            const lines = S.zhe1.map(t => ["zhe", t]);
+            lines.push(["zhe", "要怎麼辦？", [
+                ["我去現場一個一個查", () => setStep("search")],
+                ["先叫工程商來", () => say([
+                    ["zhe", "他一定先問「哪一台？什麼問題？」我們現在答不出來，他到了也只能陪你一個一個找。"],
+                    ["zhe", "還是你先去看吧。", [["好，我去現場查", () => setStep("search")]]]
+                ])]
+            ]]);
+            return say(lines);
+        }
+        const lines = S.zhe2.map(t => ["zhe", t]);
+        const right = S.fixer === "chen" ? "請老陳來處理" : "請阿德處理";
+        const wrongId = S.wrongFixer ? Object.keys(S.wrongFixer)[0] : null;
+        const choices = [[right, () => setStep("fix")]];
+        if (wrongId) {
+            choices.push(["還是請老陳來修冷風機", () => {
+                metrics.wrong++;
+                say([["chen", S.wrongFixer[wrongId]], ["zhe", "那就請阿德把貨挪開吧。", [["好", () => setStep("fix")]]]]);
+            }]);
+        }
+        choices.push(["我還是進庫看看", () => say([
+            ["zhe", "不用穿防寒衣進去找了，平台已經告訴你問題在哪。把時間留給處理吧。", [["好", () => setStep("fix")]]]
+        ])]);
+        lines.push(["zhe", "要怎麼處理？", choices]);
+        return say(lines);
     }
 
     if (id === "handoff") {
-        if (N === 1 && step === "handoff") {
-            clock += 1;
-            say([
-                ["sys", "【交接】02:00 C3 排程[[除霜]]，4 台依序，每台約 10 分鐘。C5 門封條有點鬆，白班會換。"],
-                ["sys", "除霜照理 02:40 前全部結束。現在才 02:14，C3 就告警了。", [["去中控室找阿哲", () => setStep("zhe")]]]
-            ]);
-        } else {
-            say([["sys", "交接本：02:00 C3 排程除霜，4 台依序，每台約 10 分鐘。"]]);
-        }
-        return;
+        return say([["sys", S.handoff]]);
     }
 
     if (id === "locker") {
-        if (N === 1 && step === "locker") {
-            clock += 3;
-            coat = true;
-            say([["sys", "你換上防寒衣、手套和帽子（3 分鐘）。C3 的門現在可以進了。", [["進 C3", () => setStep("search")]]]]);
-        } else if (N === 2) {
-            say([["sys", "今晚不用穿防寒衣進庫找，平台已經看到是哪一台。"]]);
-        } else {
-            say([["sys", "防寒衣櫃。進冷凍庫前要先換裝。"]]);
-        }
-        return;
+        if (N === 2) return say([["sys", "今晚不用穿防寒衣進庫找，平台已經看到問題在哪。"]]);
+        if (coat) return say([["sys", "已經穿好防寒衣了。"]]);
+        clock += 3;
+        coat = true;
+        return say([["sys", "你換上防寒衣、手套和帽子（3 分鐘）。C3 的門現在可以進了。"]]);
     }
 
-    if (o.kind === "fan") {
-        if (N === 1 && step === "search" && !checked[id]) {
+    if (S.candidates.includes(id)) {
+        if (N === 1 && step === "search") {
+            if (checked[id]) return say([["sys", `${o.name}：剛剛檢查過了。`]]);
             checked[id] = true;
             metrics.checks++;
-            clock += 6;
-            if (id === "fan2") {
+            const cost = CHECK_MIN[o.kind] || 3;
+            clock += cost;
+            if (id === S.cause) {
                 metrics.knowAt = clock;
-                say([
-                    ["sys", `${o.name}：風扇沒在轉，盤管摸起來是溫的。[[除霜]]加熱器還開著——除霜沒停！（檢查 6 分鐘）`],
-                    ["sys", `從告警到找到是哪一台，花了 ${Math.round(clock - START_CLOCK)} 分鐘。`, [["去機房找老陳", () => setStep("chen")]]]
-                ]);
-            } else {
-                say([["sys", `${o.name}：風扇在轉，出風很冷，運轉正常。（檢查 6 分鐘）手指已經有點凍了。`]]);
+                const lines = [["sys", `${o.name}：${S.found}（檢查 ${cost} 分鐘）`]];
+                if (S.foundNote) lines.push(["sys", S.foundNote]);
+                lines.push(["sys", `從告警到找到原因，花了 ${Math.round(clock - S.time)} 分鐘。`, [[`去找${NPC_PLACE[S.fixer]}`, () => setStep("fix")]]]);
+                return say(lines);
             }
-        } else if (N === 1 && checked[id]) {
-            say([["sys", `${o.name}：剛剛檢查過了。`]]);
-        } else {
-            say([["sys", `${o.name}。`]]);
+            return say([["sys", `${NORMAL_TEXT[o.kind](o)}（檢查 ${cost} 分鐘）${o.kind === "fan" ? "手指已經有點凍了。" : ""}`]]);
         }
-        return;
+        if (o.kind === "doorbox") return say([["sys", "C3 庫門控制盒。"]]);
+        if (o.kind === "unitbox") return say([["sys", "冷凍機組控制箱，C3、C4 共用這組機組。"]]);
+        return say([["sys", `${o.name}。`]]);
     }
 
     if (id === "panel") {
-        say([[
+        return say([[
             "sys",
             N === 2
-                ? "配電盤旁多了一台 AC1 [[Gateway]]。L／N 照常供電，旁邊多一條 [[D 線]]沿同一路徑分到每台冷風機，讀的是控制器的 [[Modbus RTU]] 和乾接點。"
-                : "配電盤。冷風機的電從這裡分出去，可是它們的狀態資料回不來。"
+                ? "配電盤旁多了一台 AC1 [[Gateway]]。L／N 照常供電，旁邊多一條 [[D 線]]沿同一路徑分到各台設備，讀的是控制器的 [[Modbus RTU]] 和乾接點。"
+                : "配電盤。設備的電從這裡分出去，可是它們的狀態資料回不來。"
         ]]);
-        return;
     }
 
-    if (id === "chen") {
-        if (step === "chen") {
+    if (id === "chen" || id === "de") {
+        if (step === "fix" && id === S.fixer) {
             clock += 1;
             metrics.dispatchAt = clock;
-            if (N === 1) {
-                say([
-                    ["chen", "C3 第 2 台除霜沒停？八成是除霜終止感溫棒或控制器卡住，我去處理，大概 8 分鐘。"],
-                    ["chen", "下次早點知道是哪一台，我可以直接帶料過去，你也不用在裡面凍那麼久。", [["好，我去找小美補紀錄", () => setStep("mei")]]]
-                ]);
+            const lines = (N === 1 ? S.fix1 : S.fix2).map(t => [id, t]);
+            if (N === 2 && S.ac1Question) {
+                lines.push(["chen", "不過這個 [[AC1]] 我沒用過。壞了誰修？[[備品]]買得到嗎？", [
+                    ["D 線沿既有配電分支走，冷凍控制器和平台都保留，AC1 只負責把狀態接回來。", () => say([
+                        ["chen", "原本的控制沒動就好。那備品呢？", [
+                            ["老實說，相容清單、施工手冊和在台備品還在補。", () => say([
+                                ["chen", "這個要先講清楚，我才敢幫業主報價。好，我先去修。", [["去找小美", () => setStep("mei")]]]
+                            ])]
+                        ]]
+                    ])]
+                ]]);
             } else {
-                say([
-                    ["chen", "C3 第 2 台除霜逾時，好，我直接帶除霜控制器的料過去。"],
-                    ["chen", "不過這個 [[AC1]] 我沒用過。壞了誰修？[[備品]]買得到嗎？", [
-                        ["D 線沿既有配電分支走，冷凍控制器和平台都保留，AC1 只負責把狀態接回來。", () => say([
-                            ["chen", "原本的控制沒動就好。那備品呢？", [
-                                ["老實說，相容清單、施工手冊和在台備品還在補。", () => say([
-                                    ["chen", "這個要先講清楚，我才敢幫業主報價。好，我先去修。", [["去找小美", () => setStep("mei")]]]
-                                ])]
-                            ]]
-                        ])]
-                    ]]
-                ]);
+                lines.push([id, "交給我。", [["去找小美補紀錄", () => setStep("mei")]]]);
             }
-        } else {
-            say([["chen", step === "mei" || step === "lin" ? "C3 那台在處理了，放心。" : "今晚有事再叫我，我在機房做保養。"]]);
+            return say(lines);
         }
-        return;
+        if (step === "fix" && S.wrongFixer && S.wrongFixer[id]) {
+            metrics.wrong++;
+            return say([[id, S.wrongFixer[id]]]);
+        }
+        if (step === "fix") {
+            metrics.wrong++;
+            return say([[id, id === "chen" ? "這不是設備的問題吧？我幫不上忙，去問問阿德。" : "我只管搬貨和堆高機，設備的事要找老陳。"]]);
+        }
+        const idle = { chen: "今晚有事再叫我，我在機房做保養。", de: "我在月台等下一車貨。" }[id];
+        return say([[id, step === "mei" || step === "lin" ? "在處理了，放心。" : idle]]);
     }
 
     if (id === "mei") {
-        if (step === "mei") {
-            clock += 1;
-            if (N === 1) {
-                say([
-                    ["mei", "我要補異常紀錄：哪一台、幾點開始除霜沒停、什麼時候恢復？"],
-                    ["mei", "有設備的狀態紀錄嗎？", [
-                        ["只有庫溫紀錄，冷風機的狀態沒有", () => say([
-                            ["mei", "那我只能寫「C3 庫溫異常，人工排查」。同樣的問題下次又來，也查不到前因。", [["去向林主任報告", () => setStep("lin")]]]
-                        ])]
-                    ]]
-                ]);
-            } else {
-                say([
-                    ["mei", `平台的[[設備層紀錄]]都在：02:00 C3 除霜開始，02:20 第 2 台該結束沒結束，${fmt(metrics.dispatchAt)} 派工。`],
-                    ["mei", "這份可以直接附在異常單上，下次也查得到前因。", [["去向林主任報告", () => setStep("lin")]]]
-                ]);
-            }
-        } else {
-            say([["mei", "庫溫紀錄我都會留著。"]]);
+        if (step !== "mei") return say([["mei", "溫度紀錄我都會留著。"]]);
+        clock += 1;
+        if (N === 1) {
+            return say([
+                ["mei", `我要補異常紀錄：原因是什麼、從幾點開始、什麼時候恢復？`],
+                ["mei", "有設備的狀態紀錄嗎？", [
+                    ["只有庫溫紀錄，設備狀態沒有", () => say([
+                        ["mei", "那我只能寫「庫溫異常，人工排查」。同樣的問題下次又來，也查不到前因。", [["去向林主任報告", () => setStep("lin")]]]
+                    ])]
+                ]]
+            ]);
         }
-        return;
+        return say([
+            ["mei", `平台的[[設備層紀錄]]都在：${S.causeText}，${fmt(metrics.dispatchAt)} 派工。`],
+            ["mei", "這份可以直接附在異常單上，下次也查得到前因。", [["去向林主任報告", () => setStep("lin")]]]
+        ]);
     }
 
     if (id === "lin") {
-        if (step === "lin") {
-            clock += 1;
-            metrics.endAt = clock;
-            const know = Math.round(metrics.knowAt - START_CLOCK);
-            const over = Math.round(overTempMinutes());
-            if (N === 1) {
-                say([
-                    ["lin", "C3 裡面是明天要出的冷凍水餃，影響多大？"],
-                    ["lin", `從告警到知道是哪一台花了 ${know} 分鐘，C3 超過 -18°C 大約 ${over} 分鐘。`],
-                    ["lin", "有沒有辦法不用每次進庫一台一台找？", [["（第一晚結束）", () => endNight()]]]
-                ]);
-            } else {
-                say([
-                    ["lin", `這次從告警到知道是哪一台，${know === 0 ? "接到電話當下就知道" : know + " 分鐘"}？`],
-                    ["lin", `C3 超過 -18°C 大約 ${over} 分鐘，比上次短很多。異常單也有設備層紀錄。`],
-                    ["lin", "工程商那邊在意的備品和施工手冊，補齊之前先別對外說滿。", [["（第二晚結束）", () => endNight()]]]
-                ]);
-            }
-        } else {
-            say([["lin", "C3 處理好了再跟我說。"]]);
+        if (step !== "lin") return say([["lin", "處理好了再跟我說。"]]);
+        clock += 1;
+        metrics.endAt = clock;
+        const know = Math.round(metrics.knowAt - S.time);
+        const over = Math.round(overTempMinutes());
+        const room = S.rooms.length > 1 ? "C3、C4" : "C3";
+        if (N === 1) {
+            return say([
+                ["lin", `從告警到知道原因花了 ${know} 分鐘，${room} 超過 -18°C 大約 ${over} 分鐘。`],
+                ["lin", "有沒有辦法不用每次到現場一個一個找？", [["（第一晚結束）", () => endNight()]]]
+            ]);
         }
+        return say([
+            ["lin", `這次${know === 0 ? "接到電話當下就知道原因" : `${know} 分鐘就知道原因`}，${room} 超過 -18°C 大約 ${over} 分鐘。`],
+            ["lin", "異常單也有設備層紀錄。不過備品和施工手冊補齊之前，對外先別說滿。", [["（第二晚結束）", () => endNight()]]]
+        ]);
     }
+}
+
+function interactQuiz(id) {
+    if (id !== "lin" || step !== "lin") {
+        const idle = { chen: "等等開會，我有問題要問。", zhe: "下午班沒什麼事。", mei: "擴建的品保需求我晚點給你。", de: "新庫的動線我也想聽聽。" }[id];
+        return say([[SPEAKERS[id] ? id : "sys", idle || "林主任在主任室等你開會。"]]);
+    }
+    step = "quiz";
+    metrics.score = 0;
+    const ask = i => {
+        if (i >= QUIZ.length) {
+            return say([["lin", `今天的結論：AC1 不是每個地方都最好，要看現場。${QUIZ.length} 題你答對 ${metrics.score} 題。`, [["（會議結束）", () => endQuiz()]]]]);
+        }
+        const item = QUIZ[i];
+        const opts = item.options.slice().sort(() => Math.random() - 0.5);
+        say([[i % 2 ? "chen" : "lin", `第 ${i + 1} 題：${item.q}`, opts.map(([label, ok, why]) => [label, () => {
+            if (ok) metrics.score++;
+            say([[ok ? "lin" : "chen", `${ok ? "✔" : "✘"} ${why}`, [[i + 1 < QUIZ.length ? "下一題" : "看結論", () => ask(i + 1)]]]]);
+        }])]]);
+    };
+    say([
+        ["lin", "下個月要擴建，也有其他據點想改善。老陳一直問：為什麼不用 RS-485、PoE 或 Wi-Fi？"],
+        ["chen", "我不是反對新東西，只是每種現場適合的不一樣。我們一題一題來。", [["好，開始", () => ask(0)]]]
+    ]);
 }
 
 function setStep(s) {
@@ -477,6 +678,7 @@ const SPEAKERS = {
     chen: { name: "老陳", role: "冷凍空調工程商" },
     mei: { name: "小美", role: "品保" },
     lin: { name: "林主任", role: "營運主管" },
+    de: { name: "阿德", role: "倉管／堆高機" },
     phone: { name: "📞 阿哲", role: "中控室來電" }
 };
 
@@ -622,7 +824,12 @@ function neighborsOf(o) {
 
 function guide() {
     if (dialogOpen || overlayOpen) return;
-    const ids = targets();
+    let ids = targets();
+    // 現場排查習慣：先懷疑冷風機，換好防寒衣逐台查完，再查庫門或機組
+    if (step === "search") {
+        const fansLeft = S.candidates.filter(id => !checked[id] && objById[id].kind === "fan");
+        if (fansLeft.length) ids = coat ? fansLeft : ["locker"];
+    }
     if (!ids.length) return;
     let best = null;
     ids.forEach(id => {
@@ -636,7 +843,7 @@ function guide() {
 function nearest() {
     let best = null, bd = Infinity;
     OBJS.forEach(o => {
-        if (o.kind === "pallet") return;
+        if (o.kind === "pallet" || !objActive(o)) return;
         const d = Math.hypot(o.x * T + T / 2 - player.x, o.y * T + T / 2 - player.y);
         if (d < bd) { bd = d; best = o; }
     });
@@ -656,7 +863,7 @@ const promptEl = document.getElementById("prompt");
 let renderer, scene, camera, groundPlane;
 const ray = new THREE.Raycaster();
 const pickables = [];
-const fanParts = {}, npcParts = {}, markers = {};
+const fanParts = {}, npcParts = {}, markers = {}, statusLights = {}, objGroups = {};
 let playerMesh, doorMesh, ac1Module, panelLabel, lockerLabel, screenTex, screenCtx, dLine, pulses = [];
 let tNow = 0;
 const camPos = new THREE.Vector3(20, 12, 28);
@@ -766,6 +973,11 @@ function init3D() {
     coldLight.position.set(21, 3, 4);
     scene.add(coldLight);
 
+    const outside = new THREE.Mesh(new THREE.PlaneGeometry(140, 120), std(0x161f27, { roughness: 1 }));
+    outside.rotation.x = -Math.PI / 2;
+    outside.position.set(20, -0.12, 11);
+    outside.receiveShadow = true;
+    scene.add(outside);
     groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ visible: false }));
     groundPlane.rotation.x = -Math.PI / 2;
     scene.add(groundPlane);
@@ -917,6 +1129,7 @@ function buildObjects() {
             }
             g.position.set(x, 0, z);
             scene.add(g);
+            objGroups[o.id] = g;
         } else if (o.kind === "desk") {
             g = new THREE.Group();
             const top = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.8), std(0x6b5641));
@@ -957,6 +1170,19 @@ function buildObjects() {
             g.position.set(x, 0, z - 0.2);
             scene.add(g);
             lockerLabel = addObjLabel(g, o.name, 2.2);
+        } else if (o.kind === "doorbox" || o.kind === "unitbox") {
+            g = new THREE.Group();
+            const isUnit = o.kind === "unitbox";
+            const cab = new THREE.Mesh(new THREE.BoxGeometry(isUnit ? 0.9 : 0.5, isUnit ? 1.5 : 0.6, 0.3), std(isUnit ? 0x6f7f8c : 0x9aa8b3, { metalness: 0.3, roughness: 0.5 }));
+            cab.position.y = isUnit ? 0.75 : 1.3;
+            cab.castShadow = true;
+            const light = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshBasicMaterial({ color: lin(C.run) }));
+            light.position.set(0, isUnit ? 1.2 : 1.45, 0.17);
+            g.add(cab, light);
+            g.position.set(x, 0, z - 0.3);
+            scene.add(g);
+            statusLights[o.id] = light;
+            addObjLabel(g, o.name, isUnit ? 2 : 2);
         } else if (o.kind === "panel") {
             g = new THREE.Group();
             const cab = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.8, 0.4), std(0x8d9aa5, { metalness: 0.3, roughness: 0.5 }));
@@ -1059,26 +1285,27 @@ function buildPlayer() {
 }
 
 function drawScreen() {
-    const g = screenCtx, w = 512, h = 256;
-    g.fillStyle = "#07121b"; g.fillRect(0, 0, w, h);
-    g.font = "700 22px 'Noto Sans TC', sans-serif";
-    g.fillStyle = "#8fa4b6";
+    const g = screenCtx, w = 512;
+    g.fillStyle = "#07121b"; g.fillRect(0, 0, w, 256);
+    g.font = "700 20px 'Noto Sans TC', sans-serif";
     g.textAlign = "left";
-    g.fillText(night === 2 ? "冷庫監控・設備狀態（AC1）" : "冷庫監控・庫溫", 16, 30);
+    const alert = night === 2 && S.alert && !isFixed() && S.type !== "quiz" ? S.alert().replace(/\[\[|\]\]/g, "") : "";
+    g.fillStyle = alert ? "#ef5a5a" : "#8fa4b6";
+    g.fillText(alert || (night === 2 ? "冷庫監控・設備狀態（AC1）" : "冷庫監控・庫溫"), 16, 30);
     for (let i = 0; i < 8; i++) {
         const cx = 16 + (i % 4) * 124, cy = 50 + Math.floor(i / 4) * 100;
-        const isC3 = i === 2;
-        g.fillStyle = isC3 && c3Temp(clock) > -18 ? "#4a2228" : "#13283a";
+        const hot = S.rooms && S.rooms.includes(i);
+        const temp = hot ? roomTemp(clock) : ROOM_BASE[i];
+        g.fillStyle = hot && temp > -18 ? "#4a2228" : "#13283a";
         g.fillRect(cx, cy, 112, 88);
         g.fillStyle = "#e6eef5";
         g.font = "700 20px 'Chakra Petch', sans-serif";
         g.fillText(`C${i + 1}`, cx + 8, cy + 24);
-        const temp = isC3 ? c3Temp(clock) : (i < 5 ? -22 : 1.5);
-        g.fillStyle = isC3 && temp > -18 ? "#ef5a5a" : "#e6eef5";
+        g.fillStyle = hot && temp > -18 ? "#ef5a5a" : "#e6eef5";
         g.fillText(`${temp.toFixed(1)}°`, cx + 8, cy + 52);
         for (let k = 0; k < 4; k++) {
             let col = "#2f4458";
-            if (night === 2) col = isC3 && k === 1 && metrics.dispatchAt === null ? "#4a97f0" : "#35b56f";
+            if (night === 2) col = "#" + new THREE.Color(i === 2 ? STATE_COLOR[fanState(FAN_IDS[k])] : C.run).getHexString();
             g.fillStyle = col;
             g.beginPath(); g.arc(cx + 16 + k * 26, cy + 72, 8, 0, Math.PI * 2); g.fill();
         }
@@ -1086,11 +1313,10 @@ function drawScreen() {
     screenTex.needsUpdate = true;
 }
 
+const STATE_COLOR = { run: C.run, defrost: C.defrost, fault: C.fault, stop: 0x8a96a3 };
 function fanColor3(id) {
-    if (night === 2) return id === "fan2" && metrics.dispatchAt === null ? C.defrost : C.run;
-    if (!checked[id]) return C.unknown;
-    if (id === "fan2") return metrics.dispatchAt === null ? C.defrost : C.accent;
-    return C.run;
+    if (night === 1 && !checked[id]) return C.unknown;
+    return STATE_COLOR[fanState(id)];
 }
 
 function resize3D() {
@@ -1126,8 +1352,7 @@ function update3D(dt) {
     // 冷風機：運轉中的風扇轉動、狀態燈
     OBJS.filter(o => o.kind === "fan").forEach(o => {
         const p = fanParts[o.id];
-        const running = o.id !== "fan2" || (metrics.dispatchAt !== null && clock >= metrics.dispatchAt + FIX_MIN);
-        if (running) p.blade.rotation.z += dt * 14;
+        if (fanState(o.id) === "run") p.blade.rotation.z += dt * 14;
         p.light.material.color.copy(lin(fanColor3(o.id)));
     });
 
@@ -1135,7 +1360,12 @@ function update3D(dt) {
     Object.values(npcParts).forEach((g, i) => { g.children[0].scale.y = 1 + Math.sin(tNow / 600 + i) * 0.02; });
 
     // 門、AC1 模組、D 線
+    const ajar = S.id === "door" && !isFixed();
     doorMesh.visible = !coat;
+    doorMesh.position.x = ajar ? 21.7 : 21;
+    if (objGroups.pallet7) objGroups.pallet7.visible = objActive(objById.pallet7);
+    if (statusLights.unitbox) statusLights.unitbox.material.color.copy(lin(S.id === "unit" && !isFixed() ? C.fault : C.run));
+    if (statusLights.doorbox) statusLights.doorbox.material.color.copy(lin(ajar ? C.fault : C.run));
     ac1Module.visible = night === 2;
     dLine.visible = night === 2;
     if (night === 2) pulses.forEach(s => {
@@ -1144,7 +1374,7 @@ function update3D(dt) {
     });
 
     // 文字隨狀態更新
-    const st = `${night}|${coat}|${metrics.dispatchAt}`;
+    const st = `${S.id}|${night}|${coat}|${metrics.dispatchAt}`;
     if (st !== lastState) {
         lastState = st;
         setSpriteText(panelLabel, night === 2 ? "配電盤＋AC1 Gateway" : "配電盤", 0.34, { bg: "rgba(12,22,32,0.75)" });
@@ -1158,7 +1388,7 @@ function update3D(dt) {
         mk.visible = tg.has(id);
         if (mk.visible) {
             const o = objById[id];
-            const y = (o.kind === "fan" ? 2.4 : o.kind === "npc" ? 2.1 : 2.8) + Math.sin(tNow / 250) * 0.12;
+            const y = (o.kind === "fan" ? 2.4 : o.kind === "npc" ? 2.1 : o.kind === "doorbox" ? 2.4 : 2.8) + Math.sin(tNow / 250) * 0.12;
             mk.position.set(o.x + 0.5, y, o.y + 0.5);
         }
     });
@@ -1218,7 +1448,7 @@ function loop(now) {
     requestAnimationFrame(loop);
 }
 
-// ===== 開場與結算 =====
+// ===== 選單、開場與結算 =====
 function showOverlay(html) {
     const o = document.getElementById("overlay");
     o.innerHTML = `<div class="card">${html}</div>`;
@@ -1226,6 +1456,7 @@ function showOverlay(html) {
         if (e.pointerType !== "mouse" && btn.onclick) { e.preventDefault(); suppressNextClick(); const f = btn.onclick; btn.onclick = null; f(); }
     }));
     o.hidden = false;
+    o.scrollTop = 0;
     overlayOpen = true;
     const b = o.querySelector("button");
     if (b && usingKeyboard) setTimeout(() => b.focus(), 0);
@@ -1236,88 +1467,157 @@ function hideOverlay() {
     if (usingKeyboard) document.getElementById("game").focus();
 }
 
+const DONE_KEY = "ac1-night-shift-done";
+function loadDone() {
+    try { return JSON.parse(localStorage.getItem(DONE_KEY) || "{}"); } catch (e) { return {}; }
+}
+function markDone(id, value) {
+    const d = loadDone();
+    d[id] = value;
+    try { localStorage.setItem(DONE_KEY, JSON.stringify(d)); } catch (e) { /* 無法儲存時略過 */ }
+}
+
+function showMenu() {
+    S = SCENARIOS[0];
+    resetNight(1);
+    step = "done";
+    document.getElementById("night-tag").textContent = "選擇情境";
+    document.getElementById("night-tag").className = "night-tag";
+    updateHud();
+    const done = loadDone();
+    const items = SCENARIOS.map((sc, i) => `
+        <button type="button" class="scenario" data-i="${i}">
+            <span class="sc-time">${fmt(sc.time)}</span>
+            <span class="sc-main"><b>${sc.title}</b><small>${sc.tag}</small><span>${sc.summary}</span></span>
+            <span class="sc-done">${done[sc.id] ? "✓ " + done[sc.id] : ""}</span>
+        </button>`).join("");
+    showOverlay(`
+        <div class="eyebrow">北部食品冷凍物流中心・設備工程師的班表</div>
+        <h2>今天要處理哪一件？</h2>
+        <p>每件異常都會玩兩晚：第一晚是現況，平台只看得到庫溫；第二晚有 AC1，設備狀態沿配電分支接回平台。</p>
+        <div class="scenarios">${items}</div>`);
+    document.querySelectorAll("#overlay .scenario").forEach(b => {
+        b.onclick = () => startScenario(SCENARIOS[+b.dataset.i]);
+    });
+}
+
+function startScenario(sc) {
+    S = sc;
+    results = {};
+    if (S.type === "quiz") return startQuiz();
+    startNight1();
+}
+
 function startNight1() {
     resetNight(1);
     showOverlay(`
-        <div class="eyebrow">凌晨 02:13・北部食品冷凍物流中心</div>
-        <h2>手機響了</h2>
+        <div class="eyebrow">${S.tag}・第一晚・${fmt(S.time)}</div>
+        <h2>${S.title}</h2>
         <p>你是夜班設備工程師，到職第 8 個月。8 間冷庫、32 台冷風機，今晚由你顧。</p>
-        <p>來電的是中控室的阿哲。</p>
+        <p>手機響了，是中控室的阿哲。</p>
         <div class="actions"><button type="button" class="primary" id="pick-1">接電話</button></div>`);
     document.getElementById("pick-1").onclick = () => {
         hideOverlay();
-        say([
-            ["phone", "C3 [[庫溫告警]]，-17.6°C，還在往上爬。"],
-            ["phone", "我這邊只看得到庫溫，看不到是哪一台[[冷風機]]出問題。你過來看一下？", [
-                ["我先看交接本，馬上過去", () => setStep("handoff")]
-            ]]
-        ]);
+        const lines = S.phone1.map(t => ["phone", t]);
+        lines[lines.length - 1].push([["我馬上到中控室", () => setStep("zhe")]]);
+        say(lines);
     };
 }
 
 function startNight2() {
     resetNight(2);
     showOverlay(`
-        <div class="eyebrow">第二晚・同樣是 02:13</div>
-        <h2>如果冷風機的狀態接得回來</h2>
-        <p>這次 C3 的 4 台冷風機已經用 <b>AC1</b> 接回平台：每台的運轉、故障、除霜狀態，沿配電分支多布的一條 D 線回到 Gateway，再上到原本的監控平台。冷凍控制器和平台都沒換。</p>
+        <div class="eyebrow">${S.tag}・第二晚・同樣是 ${fmt(S.time)}</div>
+        <h2>如果設備狀態接得回來</h2>
+        <p>這次冷風機、庫門與機組的狀態已經用 <b>AC1</b> 接回平台：沿配電分支多布的一條 D 線回到 Gateway，再上到原本的監控平台。冷凍控制器和平台都沒換。</p>
         <p>同樣的事又發生了。</p>
         <div class="actions"><button type="button" class="primary" id="pick-2">接電話</button></div>`);
     document.getElementById("pick-2").onclick = () => {
         hideOverlay();
-        metrics.knowAt = START_CLOCK;
-        say([
-            ["phone", "C3 [[庫溫告警]]，-17.6°C。"],
-            ["phone", "不過平台顯示：C3 第 1、3、4 台運轉，第 2 台[[除霜]]已經 23 分鐘還沒結束，除霜逾時。", [
-                ["我到中控看一下", () => setStep("zhe")]
-            ]]
-        ]);
+        metrics.knowAt = S.time;
+        const lines = S.phone2.map(t => ["phone", t]);
+        lines[lines.length - 1].push([["我到中控看一下", () => setStep("zhe")]]);
+        say(lines);
     };
 }
 
 function endNight() {
     step = "done";
     const r = {
-        know: Math.round(metrics.knowAt - START_CLOCK),
-        dispatch: Math.round(metrics.dispatchAt - START_CLOCK),
+        know: Math.round(metrics.knowAt - S.time),
+        dispatch: Math.round(metrics.dispatchAt - S.time),
         over: Math.round(overTempMinutes()),
-        peak: c3Temp(metrics.dispatchAt + FIX_MIN),
-        entries: metrics.entries,
-        exposure: Math.round(metrics.exposure + (night === 1 ? metrics.checks * 6 : 0)),
+        peak: roomTemp(metrics.dispatchAt + S.fixMin),
+        exposure: Math.round(metrics.exposure + (night === 1 ? CHECK_MIN.fan * S.candidates.filter(id => checked[id] && objById[id].kind === "fan").length : 0)),
         checks: metrics.checks,
+        wrong: metrics.wrong,
         records: night === 2 ? "有" : "無"
     };
     results[night] = r;
     if (night === 1) {
         showOverlay(`
-            <div class="eyebrow">第一晚結束・現況</div>
-            <h2>告警後 ${r.know} 分鐘，才知道是哪一台</h2>
-            <p>你進庫檢查了 <b>${r.checks} 台</b>，在 C3 裡待了約 <b>${r.exposure} 分鐘</b>。C3 最高到 <b>${r.peak.toFixed(1)}°C</b>，超過 -18°C 約 ${r.over} 分鐘。異常單上沒有設備層紀錄。</p>
+            <div class="eyebrow">${S.title}・第一晚結束・現況</div>
+            <h2>告警後 ${r.know} 分鐘，才找到原因</h2>
+            <p>原因：<b>${S.causeText}</b>。你在現場檢查了 <b>${r.checks} 處</b>，在冷凍庫裡待了約 <b>${r.exposure} 分鐘</b>。最高到 <b>${r.peak.toFixed(1)}°C</b>，超過 -18°C 約 ${r.over} 分鐘。異常單上沒有設備層紀錄。</p>
             <div class="actions"><button type="button" class="primary" id="go-2">進入第二晚：有 AC1</button></div>`);
         document.getElementById("go-2").onclick = startNight2;
-    } else {
-        const a = results[1], b = results[2];
-        const row = (k, x, y) => `<tr><th>${k}</th><td class="n">${x}</td><td class="n ac1">${y}</td></tr>`;
-        showOverlay(`
-            <div class="eyebrow">兩晚對照</div>
-            <h2>告警當下，就知道是哪一台</h2>
-            <table class="result">
-                <tr><th></th><th style="text-align:right">第一晚・現況</th><th style="text-align:right" class="ac1">第二晚・AC1</th></tr>
-                ${row("告警 → 知道是哪一台", `${a.know} 分`, b.know === 0 ? "當下" : `${b.know} 分`)}
-                ${row("告警 → 派工", `${a.dispatch} 分`, `${b.dispatch} 分`)}
-                ${row("進庫逐台檢查", `${a.checks} 台`, `${b.checks} 台`)}
-                ${row("待在冷凍庫內", `${a.exposure} 分`, `${b.exposure} 分`)}
-                ${row("C3 最高溫", `${a.peak.toFixed(1)}°C`, `${b.peak.toFixed(1)}°C`)}
-                ${row("超過 -18°C", `約 ${a.over} 分`, `約 ${b.over} 分`)}
-                ${row("設備層紀錄", a.records, b.records)}
-            </table>
-            <p>AC1 提供的是接入通道：狀態沿既有配電分支接回原平台，判讀與處置仍由控制器、平台和工程商負責。</p>
-            <div class="actions">
-                <button type="button" class="primary" id="again">再玩一次</button>
-            </div>
-            <div class="fine">遊戲數字為虛構示意，非實測。待補證據：約 -25°C 低溫凝露實測、冷庫控制器對接、同一配置圖的工程量比較、D 線同管的法規判讀。</div>`);
-        document.getElementById("again").onclick = startNight1;
+        return;
     }
+    const a = results[1], b = results[2];
+    markDone(S.id, `提早 ${Math.max(0, a.know - b.know)} 分知道原因`);
+    const row = (k, x, y) => `<tr><th>${k}</th><td class="n">${x}</td><td class="n ac1">${y}</td></tr>`;
+    showOverlay(`
+        <div class="eyebrow">${S.title}・兩晚對照</div>
+        <h2>${S.causeText}</h2>
+        <table class="result">
+            <tr><th></th><th style="text-align:right">第一晚・現況</th><th style="text-align:right" class="ac1">第二晚・AC1</th></tr>
+            ${row("告警 → 知道原因", `${a.know} 分`, b.know === 0 ? "當下" : `${b.know} 分`)}
+            ${row("告警 → 派工", `${a.dispatch} 分`, `${b.dispatch} 分`)}
+            ${row("現場檢查", `${a.checks} 處`, `${b.checks} 處`)}
+            ${row("待在冷凍庫內", `${a.exposure} 分`, `${b.exposure} 分`)}
+            ${row("最高溫", `${a.peak.toFixed(1)}°C`, `${b.peak.toFixed(1)}°C`)}
+            ${row("超過 -18°C", `約 ${a.over} 分`, `約 ${b.over} 分`)}
+            ${row("找錯人", `${a.wrong} 次`, `${b.wrong} 次`)}
+            ${row("設備層紀錄", a.records, b.records)}
+        </table>
+        <p>AC1 提供的是接入通道：狀態沿既有配電分支接回原平台，判讀與處置仍由控制器、平台和工程商負責。</p>
+        <div class="actions">
+            <button type="button" class="primary" id="menu">回到情境選單</button>
+            <button type="button" id="again">這件再玩一次</button>
+        </div>
+        <div class="fine">遊戲數字為虛構示意，非實測。待補證據：約 -25°C 低溫凝露實測、冷庫控制器對接、同一配置圖的工程量比較、D 線同管的法規判讀。</div>`);
+    document.getElementById("menu").onclick = showMenu;
+    document.getElementById("again").onclick = () => startScenario(S);
+}
+
+function startQuiz() {
+    resetNight(1);
+    player.x = 30 * T + T / 2; player.y = 10 * T + T / 2;
+    showOverlay(`
+        <div class="eyebrow">${S.tag}・${fmt(S.time)}</div>
+        <h2>${S.title}</h2>
+        <p>下午沒有異常。林主任找你和老陳開會，談擴建新庫和其他據點的改善。</p>
+        <p>老陳很直接：「為什麼不用 RS-485、PoE 或 Wi-Fi？」每種現場適合的方案不一樣，選對才算數。</p>
+        <div class="actions"><button type="button" class="primary" id="pick-q">去主任室</button></div>`);
+    document.getElementById("pick-q").onclick = () => { hideOverlay(); setStep("lin"); };
+}
+
+function endQuiz() {
+    step = "done";
+    const n = metrics.score, total = QUIZ.length;
+    markDone(S.id, `答對 ${n}/${total}`);
+    showOverlay(`
+        <div class="eyebrow">${S.title}・會議結束</div>
+        <h2>答對 ${n} / ${total} 題</h2>
+        <p><b>AC1 有利</b>：設備沿多個配電分支分散、沒有可沿用的網路、庫板遮蔽無線、營運中要局部施工。</p>
+        <p><b>AC1 不利或差異不大</b>：只需溫度且附近已有 PoE、RS-485 線很短、完全不能新增線材、跨多套變電系統。</p>
+        <p>依據 GTM 討論資料的「翻轉條件」整理；PLC 對照與低溫環境仍待實測。</p>
+        <div class="actions">
+            <button type="button" class="primary" id="menu">回到情境選單</button>
+            <button type="button" id="again">再答一次</button>
+        </div>`);
+    document.getElementById("menu").onclick = showMenu;
+    document.getElementById("again").onclick = () => startScenario(S);
 }
 
 // ===== 輸入 =====
@@ -1371,7 +1671,7 @@ function boot() {
     init3D();
     renderer.domElement.addEventListener("pointerdown", onPointer);
     window.addEventListener("resize", resize3D);
-    startNight1();
+    showMenu();
     requestAnimationFrame(loop);
 }
 
