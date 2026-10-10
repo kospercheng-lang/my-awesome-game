@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AC1 夜班值班員</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&family=Chakra+Petch:wght@500;700&display=swap">
+<style>
+    /* 夜班中控室：深藍底、冰藍冷庫、橘色為 AC1 與操作重點；單一深色主題 */
+    :root {
+        color-scheme: dark;
+        --bg: #0d1822;
+        --panel: #142433;
+        --panel-2: #1b3044;
+        --line: #2a4258;
+        --fg: #e4edf4;
+        --muted: #8ea3b5;
+        --accent: #f0901f;
+        --accent-ink: #1a0f02;
+        --ice: #1c3a52;
+        --ice-chilled: #1d3d3a;
+        --run: #35b56f;
+        --defrost: #4a97f0;
+        --fault: #ef5a5a;
+        --stop: #9aa7b3;
+        --unknown: #3c536a;
+        --warn: #f2c14e;
+        --cable: #c9a227;
+        --font-body: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif;
+        --font-num: "Chakra Petch", "Noto Sans TC", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font-body);
+        line-height: 1.5;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
+
+    .top {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 8px 16px;
+        margin-bottom: 12px;
+    }
+    .top h1 { margin: 0; font-size: 1.5rem; font-weight: 900; text-wrap: balance; }
+    .top h1 span { color: var(--accent); }
+    .top .sub { color: var(--muted); font-size: 0.9rem; }
+    .round-tag {
+        font-weight: 700;
+        padding: 4px 12px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        font-size: 0.9rem;
+    }
+    .round-tag.ac1 { border-color: var(--accent); color: var(--accent); }
+
+    /* HUD */
+    .hud {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+    .hud .cell {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 6px 10px;
+        min-width: 0;
+    }
+    .hud .k { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.05em; }
+    .hud .v {
+        font-family: var(--font-num);
+        font-size: 1.35rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .hud .v.small { font-family: var(--font-body); font-size: 0.95rem; padding-top: 4px; }
+    .hud .v.bad { color: var(--fault); }
+    @media (max-width: 600px) { .hud { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+    .game {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 12px;
+    }
+    @media (max-width: 900px) { .game { grid-template-columns: minmax(0, 1fr); } }
+
+    .board {
+        position: relative;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        min-width: 0;
+    }
+    #plan { width: 100%; height: auto; display: block; user-select: none; }
+
+    /* SVG 元件 */
+    .room { fill: var(--ice); stroke: #3f6380; stroke-width: 2; transition: fill 0.4s; }
+    .room.chilled { fill: var(--ice-chilled); stroke: #3f7a72; }
+    .room.warn { fill: #3a3a24; stroke: var(--warn); }
+    .room.alarm { fill: #4a2228; stroke: var(--fault); }
+    .room-name { font: 700 20px var(--font-num); fill: var(--fg); }
+    .room-type { font-size: 12px; fill: var(--muted); }
+    .room-temp { font: 700 26px var(--font-num); fill: var(--fg); }
+    .room-temp.alarm { fill: var(--fault); }
+    .door { fill: #5b7c96; }
+    .panel-box { fill: var(--panel-2); stroke: var(--line); stroke-width: 2; }
+    .panel-text { font-size: 13px; font-weight: 700; fill: var(--fg); }
+    .panel-sub { font-size: 10px; fill: var(--muted); }
+    .gw-box { fill: #3a2a14; stroke: var(--accent); stroke-width: 2; }
+    .gw-text { font-size: 12px; font-weight: 700; fill: var(--accent); }
+    .cable { stroke: var(--cable); stroke-width: 6; fill: none; stroke-linecap: round; opacity: 0.85; }
+    .dline { stroke: var(--defrost); stroke-width: 2.5; fill: none; stroke-dasharray: 6 8; }
+    .ac1-on .dline { animation: flow 1.2s linear infinite; }
+    .ac1-off .dline { display: none; }
+    .ac1-off .cable { stroke: #4a5a68; }
+    @keyframes flow { to { stroke-dashoffset: -28; } }
+    .cable-note { font-size: 11px; fill: var(--muted); }
+
+    .fan { cursor: pointer; }
+    .fan .hit { fill: transparent; }
+    .fan .dot { stroke: var(--bg); stroke-width: 2; transition: fill 0.25s; }
+    .fan .num { font: 700 13px var(--font-num); fill: #0d1822; pointer-events: none; }
+    .fan .tag { font-size: 11px; fill: var(--muted); pointer-events: none; }
+    .fan.s-run .dot { fill: var(--run); }
+    .fan.s-defrost .dot { fill: var(--defrost); }
+    .fan.s-fault .dot { fill: var(--fault); }
+    .fan.s-stop .dot { fill: var(--stop); }
+    .fan.s-unknown .dot { fill: var(--unknown); }
+    .fan.s-unknown .num { fill: var(--muted); }
+    .fan.s-repair .dot { fill: var(--accent); }
+    .fan.s-check .dot { fill: var(--warn); }
+    .fan.overdue .tag { fill: var(--warn); font-weight: 700; }
+    .fan:hover .dot, .fan:focus .dot { stroke: var(--fg); }
+    .fan:focus { outline: none; }
+    .fan.flash .dot { animation: pulse 0.6s ease-out; }
+    @keyframes pulse { 50% { stroke: var(--accent); stroke-width: 6; } }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; color: var(--muted); padding: 6px 4px 0; }
+    .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; background: var(--c); }
+
+    /* 側欄 */
+    .side { display: grid; gap: 10px; align-content: start; min-width: 0; }
+    .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+    }
+    .card h2 { margin: 0 0 6px; font-size: 0.95rem; }
+    .howto { font-size: 0.85rem; color: var(--muted); margin: 0; padding-left: 18px; }
+    .howto b { color: var(--fg); }
+    #toast { min-height: 1.5em; font-size: 0.9rem; color: var(--warn); }
+    #log { height: 230px; overflow-y: auto; font-size: 0.82rem; }
+    .log-entry { padding: 3px 0; border-bottom: 1px solid var(--line); }
+    .log-entry .t { color: var(--muted); margin-right: 6px; font-family: var(--font-num); }
+    .log-entry.alarm { color: var(--fault); }
+    .log-entry.good { color: var(--run); }
+    .log-entry.warn { color: var(--warn); }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    button {
+        font-family: var(--font-body);
+        font-size: 0.9rem;
+        padding: 8px 14px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--fg);
+        cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+
+    /* 覆蓋畫面 */
+    .overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(8, 15, 22, 0.88);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        border-radius: 8px;
+        overflow-y: auto;
+    }
+    .overlay[hidden] { display: none; }
+    .dialog { max-width: 560px; width: 100%; }
+    .dialog .eyebrow { color: var(--accent); font-size: 0.8rem; letter-spacing: 0.08em; font-weight: 700; }
+    .dialog h2 { margin: 4px 0 8px; font-size: 1.5rem; font-weight: 900; text-wrap: balance; }
+    .dialog p { margin: 0 0 10px; color: var(--muted); }
+    .dialog p b { color: var(--fg); }
+    .dialog .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .result-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin: 6px 0; }
+    .result-table th, .result-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+    .result-table th { color: var(--muted); font-weight: 400; }
+    .result-table td.n { font-family: var(--font-num); font-variant-numeric: tabular-nums; text-align: right; }
+    .result-table .ac1 { color: var(--accent); }
+    .grade {
+        display: inline-block;
+        font: 700 2.2rem var(--font-num);
+        color: var(--accent);
+        margin-right: 8px;
+        vertical-align: middle;
+    }
+    .fine { font-size: 0.75rem; color: var(--muted); margin-top: 10px; }
+
+    footer { color: var(--muted); font-size: 0.78rem; margin-top: 14px; }
+
+    @media (prefers-reduced-motion: reduce) {
+        .ac1-on .dline, .fan.flash .dot { animation: none; }
+    }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+    <div class="top">
+        <div>
+            <h1>夜班值班員：<span>找出是哪一台</span></h1>
+            <div class="sub">8 間冷庫・32 台冷風機・02:00 – 04:30</div>
+        </div>
+        <div class="round-tag" id="round-tag">準備交班</div>
+    </div>
+
+    <div class="hud">
+        <div class="cell"><div class="k">時間</div><div class="v" id="hud-time">02:00</div></div>
+        <div class="cell"><div class="k">貨損風險分</div><div class="v" id="hud-loss">0</div></div>
+        <div class="cell"><div class="k">已處理／異常</div><div class="v" id="hud-found">0 / 0</div></div>
+        <div class="cell"><div class="k" id="hud-4k">技術員</div><div class="v small" id="hud-4v">待命</div></div>
+    </div>
+
+    <div class="game">
+        <div class="board">
+            <svg id="plan" role="img" aria-label="冷庫平面與冷風機"></svg>
+            <div class="legend">
+                <span><i style="--c: var(--run)"></i>運轉</span>
+                <span><i style="--c: var(--defrost)"></i>除霜</span>
+                <span><i style="--c: var(--fault)"></i>故障</span>
+                <span><i style="--c: var(--stop)"></i>停轉</span>
+                <span><i style="--c: var(--unknown)"></i>看不到</span>
+                <span><i style="--c: var(--warn)"></i>檢查中</span>
+                <span><i style="--c: var(--accent)"></i>維修中</span>
+            </div>
+            <div class="overlay" id="overlay"></div>
+        </div>
+
+        <div class="side">
+            <div class="card">
+                <h2 id="howto-title">怎麼玩</h2>
+                <ul class="howto" id="howto"></ul>
+            </div>
+            <div class="card">
+                <div id="toast" aria-live="polite"></div>
+                <div class="controls">
+                    <button type="button" id="pause-btn">暫停</button>
+                    <button type="button" id="restart-btn">重新開始</button>
+                </div>
+            </div>
+            <div class="card">
+                <h2>值班紀錄</h2>
+                <div id="log"></div>
+            </div>
+        </div>
+    </div>
+
+    <footer>情境依 AC1 冷鏈 GTM 討論資料的固定情境（8 間冷庫、32 台冷風機、每台運轉／故障／除霜 3 點，共 96 點）改編。遊戲中的時間、溫度與分數皆為示意，非實測。</footer>
+</div>
+
+<script>
+    // --- 遊戲設定 ---
+    const ROUND_LEN = 150;            // 02:00 ~ 04:30（模擬分鐘）
+    const TICK_MS = 500;              // 每 0.5 秒 = 1 模擬分鐘
+    const CHECK_MIN = 5;              // 現況：進庫檢查一台
+    const REPAIR_MIN = 8;             // 維修
+    const WALK_MIN = 2;               // AC1：直接前往指定那台
+    const DEFROST_MIN = 10;           // 正常除霜時間
+    const DEFROST_OVERDUE = 15;       // 平台規則：除霜逾時
+    const FANS = 4;
+    const ROOMS = ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8"].map((id, i) => ({
+        id, type: i < 5 ? "freezer" : "chilled"
+    }));
+    const SPEC = {
+        freezer: { label: "冷凍 -25 ~ -18°C", sp: -22, max: -18 },
+        chilled: { label: "冷藏 0 ~ 5°C", sp: 1.5, max: 5 }
+    };
+    const HEAT = { run: 0, defrost: 0.45, fault: 0.6, stop: 0.5 };
+    const INCIDENT_TEXT = { defrost: "除霜未停", fault: "故障", stop: "停轉" };
+    const STATE_TEXT = { run: "運轉", defrost: "除霜", fault: "故障", stop: "停轉" };
+
+    let layout, round, mode, minute, timer, paused, seed;
+    let rooms, schedule, tech, stats, results = {};
+
+    // --- 亂數（同一局兩班用同一組異常） ---
+    function rng(s) {
+        return function () {
+            s |= 0; s = s + 0x6D2B79F5 | 0;
+            let t = Math.imul(s ^ s >>> 15, 1 | s);
+            t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+            return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+    }
+
+    function makeSchedule(s) {
+        const r = rng(s);
+        const events = [];
+        const types = ["defrost", "fault", "stop"];
+        for (let k = 0; k < 7; k++) {
+            events.push({
+                at: 6 + k * 19 + Math.floor(r() * 8),
+                kind: "incident",
+                type: types[Math.floor(r() * 3)],
+                room: Math.floor(r() * 8),
+                fan: Math.floor(r() * FANS)
+            });
+        }
+        for (let at = 3; at < ROUND_LEN - 10; at += 9 + Math.floor(r() * 6)) {
+            events.push({ at, kind: "defrost", room: Math.floor(r() * 8), fan: Math.floor(r() * FANS) });
+        }
+        return events.sort((a, b) => a.at - b.at);
+    }
+
+    // --- 版面（寬螢幕橫向、手機直向） ---
+    function makeLayout(portrait) {
+        if (!portrait) {
+            const RW = 200, RH = 215, X0 = 150, G = 12, TY = 270;
+            const room = i => {
+                const c = i % 4, r = Math.floor(i / 4);
+                return { x: X0 + c * (RW + G), y: r === 0 ? 20 : TY + 35, w: RW, h: RH, top: r === 0 };
+            };
+            const fan = (i, f) => {
+                const b = room(i);
+                return { x: b.x + 30 + f * ((RW - 60) / (FANS - 1)), y: b.top ? b.y + 40 : b.y + RH - 40, tagDy: b.top ? 32 : -24 };
+            };
+            const trunkEnd = X0 + 4 * (RW + G) - G - 10;
+            return {
+                vb: "0 0 1000 540",
+                room, fan,
+                label: i => { const b = room(i); return { x: b.x + 14, y: b.top ? b.y + RH - 80 : b.y + 70 }; },
+                door: i => { const b = room(i); return { x: b.x + RW / 2 - 25, y: b.top ? b.y + RH - 4 : b.y - 4, w: 50, h: 8 }; },
+                panel: { x: 20, y: TY - 70, w: 90, h: 140 },
+                paths: () => {
+                    const p = [`M110 ${TY} H${trunkEnd}`];
+                    ROOMS.forEach((_, i) => {
+                        const b = room(i), fy = fan(i, 0).y;
+                        p.push(`M${b.x + RW / 2 + 40} ${TY} V${fy}`);
+                        p.push(`M${fan(i, 0).x} ${fy} H${fan(i, FANS - 1).x}`);
+                    });
+                    return p;
+                },
+                note: { x: trunkEnd - 4, y: TY - 10, anchor: "end" }
+            };
+        }
+        const RW = 225, RH = 205, TX = 260;
+        const room = i => {
+            const c = i % 2, r = Math.floor(i / 2);
+            return { x: c === 0 ? 10 : 285, y: 110 + r * 222, w: RW, h: RH, left: c === 0 };
+        };
+        const fan = (i, f) => {
+            const b = room(i);
+            return { x: b.x + 34 + f * ((RW - 68) / (FANS - 1)), y: b.y + 40, tagDy: 32 };
+        };
+        return {
+            vb: "0 0 520 1010",
+            room, fan,
+            label: i => { const b = room(i); return { x: b.x + 14, y: b.y + 112 }; },
+            door: i => { const b = room(i); return { x: b.left ? b.x + RW - 4 : b.x - 4, y: b.y + RH - 70, w: 8, h: 50 }; },
+            panel: { x: 200, y: 8, w: 120, h: 84 },
+            paths: () => {
+                const p = [`M${TX} 92 V995`];
+                ROOMS.forEach((_, i) => {
+                    const b = room(i), fy = fan(i, 0).y;
+                    p.push(`M${TX} ${fy} H${b.left ? fan(i, 0).x : fan(i, FANS - 1).x}`);
+                });
+                return p;
+            },
+            note: null
+        };
+    }
+
+    function buildPlan() {
+        const portrait = window.matchMedia("(max-width: 600px)").matches;
+        layout = makeLayout(portrait);
+        const svg = document.getElementById("plan");
+        svg.setAttribute("viewBox", layout.vb);
+        const P = layout.panel;
+        let h = `<rect class="panel-box" x="${P.x}" y="${P.y}" width="${P.w}" height="${P.h}" rx="6"/>
+                 <text class="panel-text" x="${P.x + P.w / 2}" y="${P.y + 22}" text-anchor="middle">配電盤</text>
+                 <rect class="gw-box" x="${P.x + 12}" y="${P.y + P.h - 50}" width="${P.w - 24}" height="38" rx="4"/>
+                 <text class="gw-text" x="${P.x + P.w / 2}" y="${P.y + P.h - 32}" text-anchor="middle">Gateway</text>
+                 <text class="panel-sub" x="${P.x + P.w / 2}" y="${P.y + P.h - 18}" text-anchor="middle">→ 監控平台</text>`;
+
+        ROOMS.forEach((r, i) => {
+            const b = layout.room(i), L = layout.label(i), d = layout.door(i);
+            h += `<rect id="room-${i}" class="room ${r.type}" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="6"/>
+                  <rect class="door" x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}"/>
+                  <text class="room-name" x="${L.x}" y="${L.y}">${r.id}</text>
+                  <text class="room-type" x="${L.x}" y="${L.y + 18}">${SPEC[r.type].label}</text>
+                  <text id="temp-${i}" class="room-temp" x="${L.x}" y="${L.y + 50}">--</text>`;
+        });
+
+        const paths = layout.paths();
+        paths.forEach(d => { h += `<path class="cable" d="${d}"/>`; });
+        paths.forEach(d => { h += `<path class="dline" d="${d}"/>`; });
+        if (layout.note) {
+            h += `<text class="cable-note" x="${layout.note.x}" y="${layout.note.y}" text-anchor="${layout.note.anchor}">L/N 配電分支＋AC1 D 線</text>`;
+        }
+
+        ROOMS.forEach((r, i) => {
+            for (let f = 0; f < FANS; f++) {
+                const p = layout.fan(i, f);
+                h += `<g class="fan s-run" id="fan-${i}-${f}" data-room="${i}" data-fan="${f}" tabindex="0" role="button" aria-label="${r.id} 第 ${f + 1} 台冷風機">
+                        <circle class="hit" cx="${p.x}" cy="${p.y}" r="26"/>
+                        <circle class="dot" cx="${p.x}" cy="${p.y}" r="17"/>
+                        <text class="num" x="${p.x}" y="${p.y + 5}" text-anchor="middle">${f + 1}</text>
+                        <text class="tag" x="${p.x}" y="${p.y + p.tagDy}" text-anchor="middle">運轉</text>
+                      </g>`;
+            }
+        });
+        svg.innerHTML = h;
+        svg.querySelectorAll(".fan").forEach(g => {
+            const act = () => onFanClick(+g.dataset.room, +g.dataset.fan);
+            g.addEventListener("click", act);
+            g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); act(); } });
+        });
+        if (rooms) render();
+    }
+
+    // --- 狀態 ---
+    function newRound(m) {
+        mode = m;
+        minute = 0;
+        paused = false;
+        rooms = ROOMS.map(r => ({
+            ...r,
+            temp: SPEC[r.type].sp + (Math.random() - 0.5) * 0.6,
+            alarm: false,
+            fans: Array.from({ length: FANS }, () => ({
+                state: "run", since: 0, incident: null, repairUntil: null, revealed: false
+            }))
+        }));
+        schedule = makeSchedule(seed);
+        tech = { busyUntil: null, room: null, fan: null };
+        stats = { loss: 0, incidents: 0, handled: 0, locateTotal: 0, misdispatch: 0, wasted: 0, records: 0 };
+        document.getElementById("log").innerHTML = "";
+        setHowto();
+        const tag = document.getElementById("round-tag");
+        tag.textContent = m === "ac1" ? "第 2 班｜AC1 接入" : "第 1 班｜現況（只有庫溫）";
+        tag.className = `round-tag ${m === "ac1" ? "ac1" : ""}`;
+        document.getElementById("hud-4k").textContent = m === "ac1" ? "平台可見設備點" : "技術員";
+        document.getElementById("plan").setAttribute("class", m === "ac1" ? "ac1-on" : "ac1-off");
+        log(m === "ac1" ? "交班：96 點設備狀態已接回平台" : "交班：平台只看得到 8 間冷庫的庫溫");
+        render();
+    }
+
+    function setHowto() {
+        const el = document.getElementById("howto");
+        el.innerHTML = mode === "ac1"
+            ? `<li>每台冷風機的狀態都看得到。<b>點紅色、灰色，或除霜逾時的那一台</b>直接派工。</li>
+               <li>除霜 ${DEFROST_MIN} 分內結束是正常的，派去就是誤派。</li>
+               <li>超過 ${DEFROST_OVERDUE} 分還在除霜，平台會標「除霜逾時」。</li>`
+            : `<li>只看得到庫溫。庫溫變紅代表告警。</li>
+               <li><b>點一台冷風機</b>，派技術員進庫檢查（每台約 ${CHECK_MIN} 分，一次只能查一台）。</li>
+               <li>找到異常就會叫修；找錯了就是白跑一趟。</li>`;
+    }
+
+    function fanEl(i, f) { return document.getElementById(`fan-${i}-${f}`); }
+
+    // --- 每分鐘 ---
+    function tick() {
+        if (paused) return;
+        minute++;
+
+        schedule.filter(e => e.at === minute).forEach(spawn);
+
+        rooms.forEach((r, i) => r.fans.forEach((fan, f) => {
+            if (fan.state === "defrost" && !fan.incident && minute - fan.since >= DEFROST_MIN) {
+                setState(i, f, "run");
+            }
+            if (fan.repairUntil !== null && minute >= fan.repairUntil) {
+                fan.repairUntil = null;
+                fan.incident = null;
+                fan.revealed = false;
+                setState(i, f, "run");
+                log(`${r.id} 第 ${f + 1} 台修復完成`, "good");
+            }
+            if (mode === "ac1" && fan.state === "defrost" && minute - fan.since === DEFROST_OVERDUE) {
+                log(`平台：${r.id} 第 ${f + 1} 台除霜逾時 ${DEFROST_OVERDUE} 分`, "warn");
+            }
+        }));
+
+        if (tech.busyUntil !== null && minute >= tech.busyUntil) finishCheck();
+
+        rooms.forEach((r, i) => {
+            const spec = SPEC[r.type];
+            const running = r.fans.filter(f => f.state === "run").length;
+            const heat = r.fans.reduce((s, f) => s + HEAT[f.state], 0);
+            r.temp += (spec.sp - r.temp) * 0.12 * (running / FANS) + heat + (Math.random() - 0.5) * 0.12;
+            if (r.temp > spec.max) {
+                stats.loss += r.temp - spec.max;
+                if (!r.alarm) {
+                    r.alarm = true;
+                    log(`⚠ ${r.id} 庫溫告警 ${r.temp.toFixed(1)}°C`, "alarm");
+                }
+            } else if (r.alarm && r.temp < spec.max - 0.5) {
+                r.alarm = false;
+                log(`${r.id} 庫溫恢復`, "good");
+            }
+        });
+
+        render();
+        if (minute >= ROUND_LEN) endRound();
+    }
+
+    function spawn(e) {
+        const r = rooms[e.room];
+        // 找一台目前正常運轉的
+        let f = e.fan;
+        for (let k = 0; k < FANS && (r.fans[f].state !== "run" || r.fans[f].repairUntil !== null); k++) f = (f + 1) % FANS;
+        const fan = r.fans[f];
+        if (fan.state !== "run" || fan.repairUntil !== null) return;
+
+        if (e.kind === "defrost") {
+            setState(e.room, f, "defrost");
+            return;
+        }
+        fan.incident = { type: e.type, at: minute };
+        stats.incidents++;
+        setState(e.room, f, e.type === "defrost" ? "defrost" : e.type);
+    }
+
+    function setState(i, f, state) {
+        const fan = rooms[i].fans[f];
+        if (fan.state === state) return;
+        const prev = fan.state;
+        fan.state = state;
+        fan.since = minute;
+        if (mode === "ac1") {
+            stats.records++;
+            if (fan.incident && state !== "defrost") {
+                log(`${rooms[i].id} 第 ${f + 1} 台：${STATE_TEXT[prev]} → ${STATE_TEXT[state]}`, "alarm");
+            }
+        }
+    }
+
+    // --- 玩家操作 ---
+    function onFanClick(i, f) {
+        if (!timer || paused) return;
+        const r = rooms[i], fan = r.fans[f];
+        const name = `${r.id} 第 ${f + 1} 台`;
+        flash(i, f);
+
+        if (fan.repairUntil !== null) {
+            toast(`${name} 已在維修，約 ${fan.repairUntil - minute} 分完成`);
+            return;
+        }
+
+        if (mode === "now") {
+            if (tech.busyUntil !== null) {
+                toast(`技術員還在 ${rooms[tech.room].id} 庫內，約 ${tech.busyUntil - minute} 分後才能再派`);
+                return;
+            }
+            tech = { busyUntil: minute + CHECK_MIN, room: i, fan: f };
+            toast("");
+            log(`派技術員進 ${r.id} 檢查第 ${f + 1} 台（約 ${CHECK_MIN} 分）`);
+            render();
+            return;
+        }
+
+        // AC1 接入
+        if (fan.incident) {
+            dispatch(i, f, WALK_MIN + REPAIR_MIN);
+            log(`📍 派工 ${name}（${INCIDENT_TEXT[fan.incident.type]}），異常後 ${minute - fan.incident.at} 分定位`, "good");
+        } else if (fan.state === "defrost") {
+            stats.misdispatch++;
+            log(`${name} 是正常除霜（已 ${minute - fan.since} 分），誤派一次`, "warn");
+            toast(`${name} 正常除霜中，${DEFROST_MIN} 分內會結束`);
+        } else {
+            toast(`${name} 運轉正常`);
+        }
+        render();
+    }
+
+    function dispatch(i, f, mins) {
+        const fan = rooms[i].fans[f];
+        fan.repairUntil = minute + mins;
+        fan.revealed = true;
+        stats.handled++;
+        stats.locateTotal += minute - fan.incident.at;
+    }
+
+    function finishCheck() {
+        const { room: i, fan: f } = tech;
+        const r = rooms[i], fan = r.fans[f];
+        tech = { busyUntil: null, room: null, fan: null };
+        if (fan.incident) {
+            dispatch(i, f, REPAIR_MIN);
+            log(`📍 進庫找到：${r.id} 第 ${f + 1} 台${INCIDENT_TEXT[fan.incident.type]}，已叫修（異常後 ${minute - fan.incident.at} 分）`, "good");
+        } else {
+            stats.wasted++;
+            const what = fan.state === "defrost" ? "正常除霜中" : "運轉正常";
+            log(`${r.id} 第 ${f + 1} 台${what}，白跑一趟`, "warn");
+        }
+    }
+
+    // --- 畫面 ---
+    function clock(m) {
+        const t = 120 + m;
+        return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+    }
+
+    function render() {
+        document.getElementById("hud-time").textContent = clock(minute);
+        const lossEl = document.getElementById("hud-loss");
+        lossEl.textContent = Math.round(stats.loss);
+        lossEl.classList.toggle("bad", rooms.some(r => r.alarm));
+        document.getElementById("hud-found").textContent = `${stats.handled} / ${stats.incidents}`;
+        document.getElementById("hud-4v").textContent = mode === "ac1"
+            ? "96 / 96"
+            : tech.busyUntil !== null ? `檢查 ${rooms[tech.room].id}-${tech.fan + 1}（剩 ${tech.busyUntil - minute} 分）` : "待命";
+
+        rooms.forEach((r, i) => {
+            const spec = SPEC[r.type];
+            const level = r.alarm ? "alarm" : r.temp > spec.max - 1 ? "warn" : "";
+            document.getElementById(`room-${i}`).setAttribute("class", `room ${r.type} ${level}`);
+            const t = document.getElementById(`temp-${i}`);
+            t.textContent = `${r.temp.toFixed(1)}°C`;
+            t.setAttribute("class", `room-temp ${r.alarm ? "alarm" : ""}`);
+
+            r.fans.forEach((fan, f) => {
+                const g = fanEl(i, f);
+                if (!g) return;
+                let cls = "s-unknown", tag = "看不到", num = "?", overdue = false;
+                const checking = mode === "now" && tech.busyUntil !== null && tech.room === i && tech.fan === f;
+                if (fan.repairUntil !== null) {
+                    cls = "s-repair"; tag = `維修 ${fan.repairUntil - minute}分`; num = f + 1;
+                } else if (checking) {
+                    cls = "s-check"; tag = "檢查中"; num = f + 1;
+                } else if (mode === "ac1") {
+                    cls = `s-${fan.state}`; num = f + 1;
+                    const el = minute - fan.since;
+                    tag = fan.state === "defrost" ? (el >= DEFROST_OVERDUE ? "除霜逾時" : `除霜 ${el}分`) : STATE_TEXT[fan.state];
+                    overdue = fan.state === "defrost" && el >= DEFROST_OVERDUE;
+                }
+                const flashing = g.classList.contains("flash");
+                g.setAttribute("class", `fan ${cls} ${overdue ? "overdue" : ""} ${flashing ? "flash" : ""}`);
+                g.querySelector(".num").textContent = num;
+                g.querySelector(".tag").textContent = tag;
+            });
+        });
+    }
+
+    function flash(i, f) {
+        const g = fanEl(i, f);
+        g.classList.add("flash");
+        setTimeout(() => g.classList.remove("flash"), 600);
+    }
+
+    function toast(msg) { document.getElementById("toast").textContent = msg; }
+
+    function log(msg, level) {
+        const box = document.getElementById("log");
+        const d = document.createElement("div");
+        d.className = `log-entry ${level || ""}`;
+        d.innerHTML = `<span class="t">${clock(minute)}</span>`;
+        d.appendChild(document.createTextNode(msg));
+        box.prepend(d);
+    }
+
+    // --- 回合流程 ---
+    function startTimer() {
+        clearInterval(timer);
+        timer = setInterval(tick, TICK_MS);
+        document.getElementById("pause-btn").textContent = "暫停";
+    }
+
+    function stopTimer() {
+        clearInterval(timer);
+        timer = null;
+    }
+
+    function endRound() {
+        stopTimer();
+        const unresolved = rooms.reduce((s, r) => s + r.fans.filter(f => f.incident && f.repairUntil === null).length, 0);
+        results[mode] = {
+            loss: Math.round(stats.loss),
+            incidents: stats.incidents,
+            handled: stats.handled,
+            unresolved,
+            avgLocate: stats.handled ? stats.locateTotal / stats.handled : null,
+            misdispatch: stats.misdispatch,
+            wasted: stats.wasted,
+            records: mode === "ac1" ? stats.records : 0
+        };
+        log(`交班結束：貨損風險分 ${results[mode].loss}`);
+        if (mode === "now") showRound1Result();
+        else showFinal();
+    }
+
+    function showOverlay(html) {
+        const o = document.getElementById("overlay");
+        o.innerHTML = `<div class="dialog">${html}</div>`;
+        o.hidden = false;
+        const btn = o.querySelector("button");
+        if (btn) btn.focus();
+    }
+
+    function hideOverlay() { document.getElementById("overlay").hidden = true; }
+
+    function fmtMin(v) { return v === null ? "—" : `${v.toFixed(1)} 分`; }
+
+    function showStart() {
+        seed = Math.floor(Math.random() * 1e9);
+        newRound("now");
+        stopTimer();
+        showOverlay(`
+            <div class="eyebrow">凌晨 02:00・北部食品冷凍物流中心</div>
+            <h2>今晚你值夜班</h2>
+            <p>8 間冷庫、32 台冷風機。接下來兩個半小時，會有冷風機<b>除霜未停、故障或停轉</b>，庫溫一超標就開始累積貨損風險。</p>
+            <p>你要值<b>兩班</b>，遇到的是同一組異常：第 1 班是現況，平台只看得到庫溫；第 2 班有 AC1，每台冷風機的狀態都接回平台。</p>
+            <div class="actions">
+                <button type="button" class="primary" id="go-1">開始第 1 班：現況</button>
+            </div>`);
+        document.getElementById("go-1").onclick = () => { hideOverlay(); startTimer(); };
+    }
+
+    function showRound1Result() {
+        const a = results.now;
+        showOverlay(`
+            <div class="eyebrow">第 1 班結束・現況</div>
+            <h2>貨損風險分 ${a.loss}</h2>
+            <p>${a.incidents} 件異常，你找到 ${a.handled} 件，平均異常後 <b>${fmtMin(a.avgLocate)}</b> 才定位；白跑 ${a.wasted} 趟，事後沒有設備層紀錄。</p>
+            <p>第 2 班是同一組異常，這次每台冷風機的運轉、故障、除霜狀態都沿配電分支接回平台。</p>
+            <div class="actions">
+                <button type="button" class="primary" id="go-2">開始第 2 班：AC1 接入</button>
+            </div>`);
+        document.getElementById("go-2").onclick = () => { newRound("ac1"); hideOverlay(); startTimer(); };
+    }
+
+    function grade(loss) {
+        if (loss <= 40) return "S";
+        if (loss <= 100) return "A";
+        if (loss <= 200) return "B";
+        if (loss <= 400) return "C";
+        return "D";
+    }
+
+    function showFinal() {
+        const a = results.now, b = results.ac1;
+        const row = (k, x, y) => `<tr><th>${k}</th><td class="n">${x}</td><td class="n ac1">${y}</td></tr>`;
+        let summary = "";
+        if (a.avgLocate !== null && b.avgLocate !== null) {
+            summary = `有 AC1 時，你平均提早 <b>${(a.avgLocate - b.avgLocate).toFixed(1)} 分</b>定位到是哪一台。`;
+        } else if (b.avgLocate !== null) {
+            summary = `有 AC1 時，你平均異常後 <b>${b.avgLocate.toFixed(1)} 分</b>就定位到是哪一台。`;
+        }
+        showOverlay(`
+            <div class="eyebrow">交班報告</div>
+            <h2><span class="grade">${grade(b.loss)}</span>告警當下，就知道是哪一台</h2>
+            <table class="result-table">
+                <tr><th></th><th style="text-align:right">現況</th><th style="text-align:right" class="ac1">AC1 接入</th></tr>
+                ${row("貨損風險分", a.loss, b.loss)}
+                ${row("處理／異常", `${a.handled} / ${a.incidents}`, `${b.handled} / ${b.incidents}`)}
+                ${row("平均定位時間", fmtMin(a.avgLocate), fmtMin(b.avgLocate))}
+                ${row("白跑／誤派", a.wasted, b.misdispatch)}
+                ${row("設備層事件紀錄", a.records, b.records)}
+            </table>
+            <p>${summary}評等依第 2 班的貨損風險分。</p>
+            <div class="actions">
+                <button type="button" class="primary" id="again">再值一晚（新的異常）</button>
+            </div>
+            <div class="fine">遊戲數值為示意，非實測。AC1 提供接入通道，告警判讀與處置由既有控制器與平台負責。</div>`);
+        document.getElementById("again").onclick = showStart;
+    }
+
+    document.getElementById("pause-btn").onclick = e => {
+        if (!timer) return;
+        paused = !paused;
+        e.target.textContent = paused ? "繼續" : "暫停";
+    };
+    document.getElementById("restart-btn").onclick = () => { stopTimer(); showStart(); };
+
+    let lastPortrait = null;
+    function onResize() {
+        const p = window.matchMedia("(max-width: 600px)").matches;
+        if (p !== lastPortrait) { lastPortrait = p; buildPlan(); }
+    }
+    window.addEventListener("resize", onResize);
+
+    onResize();
+    showStart();
+</script>
+</body>
+</html>
