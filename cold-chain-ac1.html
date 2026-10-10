@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>冷鏈庫 AC1</title>
+    <style>
+        :root {
+            --bg: #1e2a36;
+            --panel: #2b3a4a;
+            --panel-2: #22303d;
+            --text: #eef3f7;
+            --muted: #9fb0c0;
+            --border: #3d5063;
+            --ok: #2ecc71;
+            --warn: #f1c40f;
+            --alarm: #e74c3c;
+            --accent: #3fa9f5;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: "Microsoft JhengHei", sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px 16px;
+        }
+
+        h1 { margin: 0 0 4px; text-align: center; }
+        .subtitle { text-align: center; color: var(--muted); margin: 0 0 20px; }
+
+        .layout {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .panel {
+            background: var(--panel);
+            border-radius: 10px;
+            padding: 16px;
+            min-width: 0;
+        }
+        .panel h2 { margin: 0 0 12px; font-size: 1.1rem; }
+
+        /* 溫度監控 */
+        .temp-now {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        #temp-value { font-size: 3rem; font-weight: bold; }
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: bold;
+            color: #111;
+        }
+        .status-ok { background: var(--ok); }
+        .status-warn { background: var(--warn); }
+        .status-alarm { background: var(--alarm); color: #fff; }
+
+        #temp-chart {
+            width: 100%;
+            height: 160px;
+            background: var(--panel-2);
+            border-radius: 6px;
+            display: block;
+        }
+
+        .range-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            color: var(--muted);
+        }
+
+        /* 儲位 */
+        .slots {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+        }
+        .slot {
+            background: var(--panel-2);
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 4px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 0.85rem;
+            min-height: 64px;
+        }
+        .slot:hover { border-color: var(--accent); }
+        .slot.selected { border-color: var(--accent); background: #2f4a63; }
+        .slot .code { font-weight: bold; }
+        .slot .qty { color: var(--muted); margin-top: 4px; }
+        .slot.expiring { border-color: var(--warn); }
+        .slot.expired { border-color: var(--alarm); }
+
+        #slot-detail { margin-top: 12px; font-size: 0.9rem; }
+        #slot-detail table { width: 100%; border-collapse: collapse; }
+        #slot-detail th, #slot-detail td {
+            text-align: left;
+            padding: 4px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* 表單 */
+        form { display: grid; gap: 8px; }
+        label { display: grid; gap: 4px; font-size: 0.9rem; color: var(--muted); }
+        input, select {
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid var(--border);
+            background: var(--panel-2);
+            color: var(--text);
+            font-size: 1rem;
+            width: 100%;
+        }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+
+        button {
+            padding: 10px 16px;
+            font-size: 1rem;
+            cursor: pointer;
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover { filter: brightness(1.1); }
+        button.secondary { background: #55687a; }
+        .tabs button.active { outline: 2px solid white; }
+
+        #form-msg { min-height: 1.2em; font-size: 0.9rem; }
+        .msg-error { color: var(--alarm); }
+        .msg-ok { color: var(--ok); }
+
+        #log {
+            height: 220px;
+            overflow-y: auto;
+            background: #18222c;
+            padding: 10px;
+            font-size: 0.85rem;
+            border-radius: 5px;
+        }
+        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+        .log-entry.alarm { color: var(--alarm); }
+        .log-entry.warn { color: var(--warn); }
+    </style>
+</head>
+<body>
+
+    <h1>❄️ 冷鏈庫 AC1</h1>
+    <p class="subtitle">庫區溫度監控・儲位管理・入出庫作業</p>
+
+    <div class="layout">
+        <!-- 溫度監控 -->
+        <section class="panel">
+            <h2>🌡️ 溫度監控</h2>
+            <div class="temp-now">
+                <span id="temp-value">--</span>
+                <span id="temp-status" class="status-badge status-ok">正常</span>
+            </div>
+            <canvas id="temp-chart"></canvas>
+            <div class="range-row">
+                允許範圍
+                <input id="temp-min" type="number" step="0.5" style="width:80px">
+                ~
+                <input id="temp-max" type="number" step="0.5" style="width:80px">
+                °C
+                <button class="secondary" id="door-btn" type="button">模擬開門</button>
+            </div>
+        </section>
+
+        <!-- 儲位 -->
+        <section class="panel">
+            <h2>📦 儲位一覽</h2>
+            <div class="slots" id="slots"></div>
+            <div id="slot-detail">點選儲位查看庫存</div>
+        </section>
+
+        <!-- 入出庫 -->
+        <section class="panel">
+            <h2>📝 入出庫作業</h2>
+            <div class="tabs">
+                <button type="button" id="tab-in" class="active">入庫</button>
+                <button type="button" id="tab-out" class="secondary">出庫</button>
+            </div>
+            <form id="stock-form">
+                <label>品名 <input id="f-name" required placeholder="例：冷凍雞腿"></label>
+                <div class="form-row">
+                    <label>批號 <input id="f-lot" required placeholder="例：L20261010"></label>
+                    <label>數量（箱） <input id="f-qty" type="number" min="1" required></label>
+                </div>
+                <div class="form-row">
+                    <label>儲位 <select id="f-slot"></select></label>
+                    <label id="exp-label">有效期限 <input id="f-exp" type="date"></label>
+                </div>
+                <button type="submit" id="submit-btn">確認入庫</button>
+                <div id="form-msg"></div>
+            </form>
+        </section>
+
+        <!-- 紀錄 -->
+        <section class="panel">
+            <h2>📋 作業紀錄</h2>
+            <div id="log"></div>
+            <div style="margin-top:10px; text-align:right;">
+                <button class="secondary" id="reset-btn" type="button">清除所有資料</button>
+            </div>
+        </section>
+    </div>
+
+<script>
+    // --- 設定 ---
+    const ZONE = "AC1";
+    const SLOT_COUNT = 12;          // AC1-01 ~ AC1-12
+    const SLOT_CAPACITY = 50;       // 每個儲位最多 50 箱
+    const EXPIRY_WARN_DAYS = 7;     // 7 天內到期提示
+    const STORAGE_KEY = "cold-chain-ac1";
+
+    const defaultState = {
+        tempMin: -25,
+        tempMax: -18,
+        slots: {},   // { "AC1-01": [ { name, lot, qty, exp, inAt } ] }
+        logs: []
+    };
+
+    let state = loadState();
+    let mode = "in";               // "in" 入庫 / "out" 出庫
+    let selectedSlot = null;
+    let temps = [];                // 最近溫度紀錄
+    let doorOpenTicks = 0;         // 模擬開門造成升溫
+    let lastStatus = "ok";
+
+    const slotCodes = Array.from({ length: SLOT_COUNT }, (_, i) =>
+        `${ZONE}-${String(i + 1).padStart(2, "0")}`);
+
+    // --- 資料存取 ---
+    function loadState() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) return Object.assign({}, defaultState, JSON.parse(raw));
+        } catch (e) { /* 無法讀取時使用預設值 */ }
+        return JSON.parse(JSON.stringify(defaultState));
+    }
+
+    function saveState() {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (e) { /* 無法儲存時僅保留在記憶體 */ }
+    }
+
+    // --- 溫度監控 ---
+    function readSensor() {
+        const target = (state.tempMin + state.tempMax) / 2;
+        const prev = temps.length ? temps[temps.length - 1] : target;
+        let next = prev + (target - prev) * 0.2 + (Math.random() - 0.5) * 0.6;
+        if (doorOpenTicks > 0) {
+            next += 1.2;
+            doorOpenTicks--;
+        }
+        return Math.round(next * 10) / 10;
+    }
+
+    function getTempStatus(t) {
+        const margin = 1;
+        if (t < state.tempMin || t > state.tempMax) return "alarm";
+        if (t < state.tempMin + margin || t > state.tempMax - margin) return "warn";
+        return "ok";
+    }
+
+    function tickTemperature() {
+        const t = readSensor();
+        temps.push(t);
+        if (temps.length > 60) temps.shift();
+
+        const status = getTempStatus(t);
+        const badge = document.getElementById("temp-status");
+        document.getElementById("temp-value").innerText = `${t.toFixed(1)}°C`;
+        badge.className = `status-badge status-${status}`;
+        badge.innerText = { ok: "正常", warn: "接近上下限", alarm: "超出範圍！" }[status];
+
+        if (status !== lastStatus) {
+            if (status === "alarm") log(`⚠️ 溫度異常：${t.toFixed(1)}°C，超出允許範圍`, "alarm");
+            else if (lastStatus === "alarm") log(`溫度恢復：${t.toFixed(1)}°C`);
+            lastStatus = status;
+        }
+        drawChart();
+    }
+
+    function drawChart() {
+        const canvas = document.getElementById("temp-chart");
+        const ctx = canvas.getContext("2d");
+        const w = canvas.width = canvas.clientWidth;
+        const h = canvas.height = canvas.clientHeight;
+        ctx.clearRect(0, 0, w, h);
+
+        const lo = state.tempMin - 5;
+        const hi = state.tempMax + 5;
+        const y = v => h - ((v - lo) / (hi - lo)) * h;
+
+        // 允許範圍色帶
+        ctx.fillStyle = "rgba(46, 204, 113, 0.12)";
+        ctx.fillRect(0, y(state.tempMax), w, y(state.tempMin) - y(state.tempMax));
+        ctx.strokeStyle = "rgba(46, 204, 113, 0.6)";
+        ctx.setLineDash([4, 4]);
+        [state.tempMin, state.tempMax].forEach(v => {
+            ctx.beginPath();
+            ctx.moveTo(0, y(v));
+            ctx.lineTo(w, y(v));
+            ctx.stroke();
+        });
+        ctx.setLineDash([]);
+
+        // 溫度曲線
+        if (temps.length < 2) return;
+        ctx.strokeStyle = "#3fa9f5";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        temps.forEach((t, i) => {
+            const x = (i / 59) * w;
+            i === 0 ? ctx.moveTo(x, y(t)) : ctx.lineTo(x, y(t));
+        });
+        ctx.stroke();
+    }
+
+    // --- 儲位 ---
+    function slotQty(code) {
+        return (state.slots[code] || []).reduce((sum, item) => sum + item.qty, 0);
+    }
+
+    function daysUntil(dateStr) {
+        if (!dateStr) return Infinity;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        return Math.round((new Date(dateStr) - today) / 86400000);
+    }
+
+    function renderSlots() {
+        const wrap = document.getElementById("slots");
+        wrap.innerHTML = "";
+        slotCodes.forEach(code => {
+            const items = state.slots[code] || [];
+            const minDays = Math.min(...items.map(i => daysUntil(i.exp)), Infinity);
+            const el = document.createElement("div");
+            el.className = "slot";
+            if (code === selectedSlot) el.classList.add("selected");
+            if (minDays < 0) el.classList.add("expired");
+            else if (minDays <= EXPIRY_WARN_DAYS) el.classList.add("expiring");
+            el.innerHTML = `
+                <div class="code">${code}</div>
+                <div class="qty">${slotQty(code)} / ${SLOT_CAPACITY} 箱</div>
+            `;
+            el.onclick = () => {
+                selectedSlot = code;
+                document.getElementById("f-slot").value = code;
+                renderSlots();
+                renderSlotDetail();
+            };
+            wrap.appendChild(el);
+        });
+    }
+
+    function renderSlotDetail() {
+        const box = document.getElementById("slot-detail");
+        if (!selectedSlot) {
+            box.innerText = "點選儲位查看庫存";
+            return;
+        }
+        const items = sortFEFO(state.slots[selectedSlot] || []);
+        if (!items.length) {
+            box.innerText = `${selectedSlot}：目前無庫存`;
+            return;
+        }
+        const rows = items.map(i => {
+            const d = daysUntil(i.exp);
+            const note = d < 0 ? " ❌已過期" : d <= EXPIRY_WARN_DAYS ? ` ⚠️剩 ${d} 天` : "";
+            return `<tr><td>${escapeHtml(i.name)}</td><td>${escapeHtml(i.lot)}</td>
+                    <td>${i.qty}</td><td>${i.exp || "-"}${note}</td></tr>`;
+        }).join("");
+        box.innerHTML = `
+            <strong>${selectedSlot}</strong>
+            <table>
+                <tr><th>品名</th><th>批號</th><th>箱數</th><th>有效期限</th></tr>
+                ${rows}
+            </table>
+        `;
+    }
+
+    // 先到期先出 (FEFO)
+    function sortFEFO(items) {
+        return [...items].sort((a, b) => (a.exp || "9999") .localeCompare(b.exp || "9999"));
+    }
+
+    // --- 入出庫 ---
+    function setMode(newMode) {
+        mode = newMode;
+        document.getElementById("tab-in").className = mode === "in" ? "active" : "secondary";
+        document.getElementById("tab-out").className = mode === "out" ? "active" : "secondary";
+        document.getElementById("submit-btn").innerText = mode === "in" ? "確認入庫" : "確認出庫";
+        document.getElementById("exp-label").style.visibility = mode === "in" ? "visible" : "hidden";
+        showMsg("");
+    }
+
+    function handleSubmit(e) {
+        e.preventDefault();
+        const name = document.getElementById("f-name").value.trim();
+        const lot = document.getElementById("f-lot").value.trim();
+        const qty = parseInt(document.getElementById("f-qty").value, 10);
+        const code = document.getElementById("f-slot").value;
+        const exp = document.getElementById("f-exp").value;
+
+        if (!name || !lot || !(qty > 0)) {
+            showMsg("請完整填寫品名、批號與數量", true);
+            return;
+        }
+
+        const ok = mode === "in"
+            ? stockIn(code, name, lot, qty, exp)
+            : stockOut(code, name, lot, qty);
+        if (!ok) return;
+
+        saveState();
+        selectedSlot = code;
+        renderSlots();
+        renderSlotDetail();
+        document.getElementById("stock-form").reset();
+        document.getElementById("f-slot").value = code;
+    }
+
+    function stockIn(code, name, lot, qty, exp) {
+        if (lastStatus === "alarm") {
+            showMsg("庫區溫度異常，暫停入庫作業", true);
+            return false;
+        }
+        if (!exp) {
+            showMsg("入庫需填寫有效期限", true);
+            return false;
+        }
+        if (daysUntil(exp) < 0) {
+            showMsg("此批貨品已過期，不可入庫", true);
+            return false;
+        }
+        if (slotQty(code) + qty > SLOT_CAPACITY) {
+            showMsg(`${code} 剩餘容量 ${SLOT_CAPACITY - slotQty(code)} 箱，不足 ${qty} 箱`, true);
+            return false;
+        }
+
+        const items = state.slots[code] = state.slots[code] || [];
+        const same = items.find(i => i.name === name && i.lot === lot);
+        if (same) same.qty += qty;
+        else items.push({ name, lot, qty, exp, inAt: new Date().toISOString() });
+
+        log(`📥 入庫 ${name}（批號 ${lot}）${qty} 箱 → ${code}`);
+        showMsg("入庫完成", false);
+        return true;
+    }
+
+    function stockOut(code, name, lot, qty) {
+        const items = state.slots[code] || [];
+        const item = items.find(i => i.name === name && i.lot === lot);
+        if (!item) {
+            showMsg(`${code} 找不到 ${name}（批號 ${lot}）`, true);
+            return false;
+        }
+        if (item.qty < qty) {
+            showMsg(`庫存不足，${code} 僅有 ${item.qty} 箱`, true);
+            return false;
+        }
+
+        // FEFO 提示：同品名有更早到期的批號
+        const earlier = items.find(i => i.name === name && i !== item && i.exp && i.exp < item.exp);
+        if (earlier && !confirm(`依先到期先出原則，建議先出批號 ${earlier.lot}（${earlier.exp} 到期）。\n仍要出庫批號 ${lot} 嗎？`)) {
+            return false;
+        }
+
+        item.qty -= qty;
+        if (item.qty === 0) items.splice(items.indexOf(item), 1);
+
+        log(`📤 出庫 ${name}（批號 ${lot}）${qty} 箱 ← ${code}`);
+        showMsg("出庫完成", false);
+        return true;
+    }
+
+    // --- UI 輔助 ---
+    function showMsg(text, isError) {
+        const el = document.getElementById("form-msg");
+        el.innerText = text;
+        el.className = isError ? "msg-error" : "msg-ok";
+    }
+
+    function log(msg, level) {
+        const time = new Date().toLocaleTimeString("zh-TW", { hour12: false });
+        state.logs.unshift({ time, msg, level: level || "" });
+        state.logs = state.logs.slice(0, 200);
+        saveState();
+        renderLog();
+    }
+
+    function renderLog() {
+        const box = document.getElementById("log");
+        box.innerHTML = "";
+        state.logs.forEach(l => {
+            const entry = document.createElement("div");
+            entry.className = `log-entry ${l.level}`;
+            entry.innerText = `[${l.time}] ${l.msg}`;
+            box.appendChild(entry);
+        });
+    }
+
+    function escapeHtml(s) {
+        const div = document.createElement("div");
+        div.innerText = s;
+        return div.innerHTML;
+    }
+
+    // --- 初始化 ---
+    function init() {
+        const slotSelect = document.getElementById("f-slot");
+        slotCodes.forEach(code => slotSelect.add(new Option(code, code)));
+
+        const minInput = document.getElementById("temp-min");
+        const maxInput = document.getElementById("temp-max");
+        minInput.value = state.tempMin;
+        maxInput.value = state.tempMax;
+        const onRangeChange = () => {
+            const min = parseFloat(minInput.value);
+            const max = parseFloat(maxInput.value);
+            if (isNaN(min) || isNaN(max) || min >= max) return;
+            state.tempMin = min;
+            state.tempMax = max;
+            saveState();
+            log(`溫度範圍設定為 ${min}°C ~ ${max}°C`);
+            drawChart();
+        };
+        minInput.onchange = onRangeChange;
+        maxInput.onchange = onRangeChange;
+
+        document.getElementById("door-btn").onclick = () => {
+            doorOpenTicks = 6;
+            log("🚪 AC1 庫門開啟（模擬）", "warn");
+        };
+        document.getElementById("tab-in").onclick = () => setMode("in");
+        document.getElementById("tab-out").onclick = () => setMode("out");
+        document.getElementById("stock-form").onsubmit = handleSubmit;
+        document.getElementById("reset-btn").onclick = () => {
+            if (!confirm("確定要清除 AC1 所有庫存與紀錄嗎？")) return;
+            state = JSON.parse(JSON.stringify(defaultState));
+            saveState();
+            minInput.value = state.tempMin;
+            maxInput.value = state.tempMax;
+            selectedSlot = null;
+            renderSlots();
+            renderSlotDetail();
+            renderLog();
+        };
+        window.addEventListener("resize", drawChart);
+
+        renderSlots();
+        renderLog();
+        if (!state.logs.length) log(`冷鏈庫 ${ZONE} 系統啟動`);
+
+        tickTemperature();
+        setInterval(tickTemperature, 2000);
+    }
+
+    init();
+</script>
+</body>
+</html>
